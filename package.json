@@ -1,0 +1,26 @@
+{
+  "name": "claude-lens",
+  "version": "1.0.0",
+  "description": "",
+  "author": "Padmanabha Das",
+  "license": "ISC",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/server.ts",
+    "start": "node src/server.ts"
+  },
+  "keywords": [],
+  "dependencies": {
+    "colors": "^1.4.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "morgan": "^1.10.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
