@@ -5,6 +5,7 @@ import express, {Express} from 'express';
 import {PORT} from "./config/config";
 import {connectDB} from "./config/connectDB";
 import {getLocalIP} from "./utils/getLocalIP";
+import conversationRoutes from "./routes/ConversationRoutes";
 
 // rest object
 const app: Express = express();
@@ -14,7 +15,7 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // routes
-// app.use('/api/v1/...', ...Routes);
+app.use('/api/v1/conversations', conversationRoutes);
 app.get('/', function (req, res) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');
 });
@@ -25,15 +26,10 @@ const start = async () => {
     try {
         await connectDB();
 
-        app.listen(port, '0.0.0.0', (error?: Error, address?: string) => {
-            if (error) {
-                console.error('Service Error: Failed to start server'.red.bold, error);
-                process.exit(1);
-            } else {
-                console.log(`Server started on ${PORT}`.blue.italic.bold);
-                console.log(`\t- Local:        http://localhost:${PORT}`.green.bold);
-                console.log(`\t- Network:      http://${getLocalIP()}:${PORT}`.green.bold);
-            }
+        app.listen(port, '0.0.0.0', () => {
+            console.log(`Server started on ${PORT}`.blue.italic.bold);
+            console.log(`\t- Local:        http://localhost:${PORT}`.green.bold);
+            console.log(`\t- Network:      http://${getLocalIP()}:${PORT}`.green.bold);
         });
     } catch (error: any) {
         console.error('Service Error: Server setup failed'.red.bold, error);
