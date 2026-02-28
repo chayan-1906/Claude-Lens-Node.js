@@ -1,45 +1,18 @@
-import "dotenv/config";
 import "colors";
 import fs from "fs";
+import "dotenv/config";
 import path from "path";
-import readline from "readline";
 import {Types} from "mongoose";
-import {connectDB, closeConnection} from "../config/connectDB";
+import readline from "readline";
+import MessageModel from "../models/Message";
+import {parseJsonlFile} from "../utils/parseJsonlFile";
+import {IParsedFile, IParsedMessage} from "../types/sync";
+import {closeConnection, connectDB} from "../config/connectDB";
 import ConversationModel, {EConversationSource} from "../models/Conversation";
-import MessageModel, {EMessageRole} from "../models/Message";
 
 // --- Constants ---
 
-const CLAUDE_PROJECTS_DIR: string = path.join(
-    process.env.HOME || '~',
-    '.claude',
-    'projects',
-);
-const TITLE_MAX_LENGTH: number = 60;
-
-// --- Types ---
-
-interface ParsedMessage {
-    uuid: string;
-    role: EMessageRole;
-    content: string | Record<string, unknown>[];
-    aiModel?: string;
-    timestamp: Date;
-    tokenUsage?: {
-        input: number;
-        output: number;
-    };
-}
-
-interface ParsedFile {
-    sessionId: string;
-    projectDir: string;
-    gitBranch?: string;
-    slug?: string;
-    aiModel?: string;
-    title: string;
-    messages: ParsedMessage[];
-}
+const CLAUDE_PROJECTS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'projects');
 
 // --- Functions ---
 
@@ -54,13 +27,10 @@ async function promptForPaths(): Promise<string[]> {
     });
 
     const answer: string = await new Promise((resolve) => {
-        rl.question(
-            'Enter project path(s) comma-separated, or press Enter to sync all:\n> '.cyan,
-            (input: string) => {
-                rl.close();
-                resolve(input.trim());
-            }
-        );
+        rl.question('Enter project path(s) comma-separated, or press Enter to sync all:\n> '.cyan, (input: string) => {
+            rl.close();
+            resolve(input.trim());
+        });
     });
 
     if (!answer) {
@@ -70,18 +40,18 @@ async function promptForPaths(): Promise<string[]> {
             process.exit(1);
         }
 
-        const dirs: string[] = fs.readdirSync(CLAUDE_PROJECTS_DIR, {withFileTypes: true})
+        const directories: string[] = fs.readdirSync(CLAUDE_PROJECTS_DIR, {withFileTypes: true})
             .filter((entry: fs.Dirent) => entry.isDirectory())
             .map((entry: fs.Dirent) => path.join(CLAUDE_PROJECTS_DIR, entry.name));
 
-        console.log(`Found ${dirs.length} project directories`.green);
-        return dirs;
+        console.log(`Found ${directories.length} project directories`.green);
+        return directories;
     }
 
     // Validate user-provided paths
     // Accepts real project paths (e.g. /Users/padmanabhadas/Chayan_Personal/NodeJs)
     // and converts them to ~/.claude/projects/ directory names
-    const paths: string[] = answer.split(',').map((p: string) => p.trim());
+    const paths: string[] = answer.split(',').map((path: string) => path.trim());
     const validPaths: string[] = [];
 
     for (const p of paths) {
@@ -116,19 +86,19 @@ async function promptForPaths(): Promise<string[]> {
  * Find all .jsonl files at the top level of given directories
  * Skips subdirectories (subagent files, tool-results)
  */
-function findJsonlFiles(dirs: string[]): string[] {
+function findJsonlFiles(directories: string[]): string[] {
     const files: string[] = [];
 
-    for (const dir of dirs) {
+    for (const directory of directories) {
         try {
-            const entries: string[] = fs.readdirSync(dir);
+            const entries: string[] = fs.readdirSync(directory);
             for (const entry of entries) {
                 if (entry.endsWith('.jsonl')) {
-                    files.push(path.join(dir, entry));
+                    files.push(path.join(directory, entry));
                 }
             }
-        } catch (err: unknown) {
-            console.warn(`Warning: Could not read directory ${dir}: ${err}`.yellow);
+        } catch (error: unknown) {
+            console.warn(`Warning: Could not read directory ${directory}: ${error}`.yellow);
         }
     }
 
@@ -136,124 +106,20 @@ function findJsonlFiles(dirs: string[]): string[] {
 }
 
 /**
- * Parse a single JSONL file into structured conversation data
- * Returns null if file has no user/assistant messages
- */
-function parseJsonlFile(filePath: string): ParsedFile | null {
-    const raw: string = fs.readFileSync(filePath, 'utf-8');
-    const lines: string[] = raw.split('\n');
-
-    const messages: ParsedMessage[] = [];
-    let sessionId: string = '';
-    let projectDir: string = '';
-    let gitBranch: string | undefined;
-    let slug: string | undefined;
-    let aiModel: string | undefined;
-    let title: string = '';
-
-    for (let i: number = 0; i < lines.length; i++) {
-        const line: string = lines[i].trim();
-        if (!line) continue;
-
-        let parsed: Record<string, unknown>;
-        try {
-            parsed = JSON.parse(line);
-        } catch {
-            console.warn(`  Warning: Malformed JSON at line ${i + 1} in ${path.basename(filePath)}`.yellow);
-            continue;
-        }
-
-        const lineType: string = parsed.type as string;
-
-        // Extract metadata from every line (slug can appear on later lines)
-        if (!sessionId && parsed.sessionId) {
-            sessionId = parsed.sessionId as string;
-        }
-        if (!projectDir && parsed.cwd) {
-            projectDir = parsed.cwd as string;
-        }
-        if (parsed.gitBranch) {
-            gitBranch = parsed.gitBranch as string;
-        }
-        if (parsed.slug) {
-            slug = parsed.slug as string;
-        }
-
-        // Only store user and assistant messages
-        if (lineType !== 'user' && lineType !== 'assistant') continue;
-
-        const message: Record<string, unknown> = parsed.message as Record<string, unknown>;
-        if (!message) continue;
-
-        const role: string = message.role as string;
-        if (role !== 'user' && role !== 'assistant') continue;
-
-        const messageRole: EMessageRole = role === 'user' ? EMessageRole.USER : EMessageRole.ASSISTANT;
-
-        // Extract title from first user message
-        if (!title && role === 'user' && typeof message.content === 'string') {
-            title = message.content.length > TITLE_MAX_LENGTH
-                ? message.content.substring(0, TITLE_MAX_LENGTH) + '...'
-                : message.content;
-        }
-
-        // Extract aiModel from first assistant message
-        if (!aiModel && role === 'assistant' && message.model) {
-            aiModel = message.model as string;
-        }
-
-        // Build parsed message
-        const parsedMessage: ParsedMessage = {
-            uuid: parsed.uuid as string,
-            role: messageRole,
-            content: message.content as string | Record<string, unknown>[],
-            timestamp: new Date(parsed.timestamp as string),
-        };
-
-        if (role === 'assistant') {
-            if (message.model) {
-                parsedMessage.aiModel = message.model as string;
-            }
-            const usage: Record<string, unknown> | undefined = message.usage as Record<string, unknown> | undefined;
-            if (usage) {
-                parsedMessage.tokenUsage = {
-                    input: (usage.input_tokens as number) || 0,
-                    output: (usage.output_tokens as number) || 0,
-                };
-            }
-        }
-
-        messages.push(parsedMessage);
-    }
-
-    if (messages.length === 0) return null;
-
-    return {
-        sessionId,
-        projectDir,
-        gitBranch,
-        slug,
-        aiModel,
-        title: title || 'Untitled conversation',
-        messages,
-    };
-}
-
-/**
- * Sync a single parsed file to MongoDB
+ * Sync a single parsedFile file to MongoDB
  * Upserts conversation, incrementally inserts only new messages
  * Returns count of new messages inserted
  */
-async function syncFile(parsed: ParsedFile): Promise<number> {
+async function syncFile(parsedFile: IParsedFile): Promise<number> {
     // 1. Upsert conversation
     const conversation = await ConversationModel.findOneAndUpdate(
-        {sessionId: parsed.sessionId},
+        {sessionId: parsedFile.sessionId},
         {
-            title: parsed.title,
-            aiModel: parsed.aiModel,
-            projectDir: parsed.projectDir,
-            gitBranch: parsed.gitBranch,
-            slug: parsed.slug,
+            title: parsedFile.title,
+            aiModel: parsedFile.aiModel,
+            projectDir: parsedFile.projectDir,
+            gitBranch: parsedFile.gitBranch,
+            slug: parsedFile.slug,
             source: EConversationSource.TERMINAL,
         },
         {upsert: true, returnDocument: 'after'},
@@ -264,23 +130,23 @@ async function syncFile(parsed: ParsedFile): Promise<number> {
     // 2. Get existing message UUIDs for this conversation
     const existingDocs = await MessageModel.find(
         {conversationId},
-        {uuid: 1}
+        {uuid: 1},
     ).lean();
     const existingUuids: Set<string> = new Set(
-        existingDocs.map((doc) => doc.uuid as string)
+        existingDocs.map((document) => document.uuid as string)
     );
 
     // 3. Filter to only new messages
-    const newMessages = parsed.messages
-        .filter((msg: ParsedMessage) => !existingUuids.has(msg.uuid))
-        .map((msg: ParsedMessage) => ({
-            uuid: msg.uuid,
+    const newMessages = parsedFile.messages
+        .filter((parsedMessage: IParsedMessage) => !existingUuids.has(parsedMessage.uuid))
+        .map((parsedMessage: IParsedMessage) => ({
+            uuid: parsedMessage.uuid,
             conversationId,
-            role: msg.role,
-            content: msg.content,
-            aiModel: msg.aiModel,
-            timestamp: msg.timestamp,
-            tokenUsage: msg.tokenUsage,
+            role: parsedMessage.role,
+            content: parsedMessage.content,
+            aiModel: parsedMessage.aiModel,
+            timestamp: parsedMessage.timestamp,
+            tokenUsage: parsedMessage.tokenUsage,
         }));
 
     // 4. Bulk insert new messages
@@ -298,10 +164,10 @@ async function main(): Promise<void> {
     console.log('\n=== Claude Lens Sync ===\n'.blue.bold);
 
     // 1. Prompt for paths
-    const dirs: string[] = await promptForPaths();
+    const directories: string[] = await promptForPaths();
 
     // 2. Find JSONL files
-    const files: string[] = findJsonlFiles(dirs);
+    const files: string[] = findJsonlFiles(directories);
     if (files.length === 0) {
         console.log('No .jsonl files found. Nothing to sync.'.yellow);
         process.exit(0);
@@ -321,15 +187,15 @@ async function main(): Promise<void> {
     for (const file of files) {
         const filename: string = path.basename(file);
         try {
-            const parsed: ParsedFile | null = parseJsonlFile(file);
-            if (!parsed) {
+            const parsedFile: IParsedFile | null = parseJsonlFile(file);
+            if (!parsedFile) {
                 console.log(`  Skip: ${filename} (no user/assistant messages)`.gray);
                 totalSkipped++;
                 continue;
             }
 
-            const newCount: number = await syncFile(parsed);
-            const existingCount: number = parsed.messages.length - newCount;
+            const newCount: number = await syncFile(parsedFile);
+            const existingCount: number = parsedFile.messages.length - newCount;
 
             if (newCount > 0) {
                 console.log(`  Synced: ${filename} — ${newCount} new message(s) (${existingCount} already existed)`.green);
@@ -339,8 +205,8 @@ async function main(): Promise<void> {
 
             totalSynced++;
             totalNew += newCount;
-        } catch (err: unknown) {
-            console.error(`  Error: ${filename} — ${err}`.red);
+        } catch (error: unknown) {
+            console.error(`  Error: ${filename} — ${error}`.red);
             totalErrors++;
         }
     }
@@ -357,7 +223,7 @@ async function main(): Promise<void> {
     process.exit(0);
 }
 
-main().catch((err: unknown) => {
-    console.error('Fatal error:'.red.bold, err);
+main().catch((error: unknown) => {
+    console.error('Fatal error:'.red.bold, error);
     process.exit(1);
 });
