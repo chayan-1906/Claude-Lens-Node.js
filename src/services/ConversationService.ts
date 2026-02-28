@@ -2,7 +2,7 @@ import "colors";
 import MessageModel from "../models/Message";
 import ConversationModel, {IConversation} from "../models/Conversation";
 import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IGetAllConversationsParams, IGetAllConversationsResponse, IGetSessionResponse, IPagination} from "../types/conversation";
+import {IGetAllConversationsParams, IGetAllConversationsResponse, IGetProjectsResponse, IGetSessionResponse, IPagination} from "../types/conversation";
 
 class ConversationService {
     static async getAllConversations({title, source, projectDir, page = 1, limit = 20}: IGetAllConversationsParams): Promise<IGetAllConversationsResponse> {
@@ -51,6 +51,15 @@ class ConversationService {
         console.log('Database: Session fetched'.cyan, {sessionId, messages: messages.length});
 
         return {conversation, messages};
+    }
+
+    static async getProjects(): Promise<IGetProjectsResponse> {
+        console.log('Service: ConversationService.getProjects called'.cyan.italic);
+
+        const projects: string[] = await ConversationModel.distinct('projectDir');
+        console.log('Database: Projects fetched'.cyan, projects.length);
+
+        return {projects};
     }
 }
 

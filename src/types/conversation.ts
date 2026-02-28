@@ -25,6 +25,10 @@ export interface IGetSessionResponse {
     error?: string;
 }
 
+export interface IGetProjectsResponse {
+    projects: string[];
+}
+
 /** ------------- function params ------------- */
 
 export interface IGetAllConversationsParams {

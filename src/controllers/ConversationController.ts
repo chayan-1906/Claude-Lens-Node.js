@@ -93,4 +93,25 @@ const getSessionController = async (req: Request, res: Response) => {
     }
 }
 
-export {getAllConversationsController, getSessionController};
+const getProjectsController = async (req: Request, res: Response) => {
+    console.info('Controller: getProjectsController started'.bgBlue.white.bold);
+
+    try {
+        const {projects} = await ConversationService.getProjects();
+
+        console.log('SUCCESS: Projects fetched'.bgGreen.bold, {projects: projects.length});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Projects have been fetched!',
+            projects,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getProjectsController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while retrieving projects!',
+        }));
+    }
+}
+
+export {getAllConversationsController, getSessionController, getProjectsController};
