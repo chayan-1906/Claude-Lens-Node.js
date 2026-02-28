@@ -4,16 +4,19 @@ import "dotenv/config";
 import path from "path";
 import {Types} from "mongoose";
 import readline from "readline";
+import TaskModel from "../models/Task";
+import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
-import {IParsedFile, IParsedMessage} from "../types/sync";
 import {closeConnection, connectDB} from "../config/connectDB";
+import {IParsedFile, IParsedMessage, RawTask} from "../types/sync";
 import ConversationModel, {EConversationSource} from "../models/Conversation";
 
 // --- Constants ---
 
 const CLAUDE_PROJECTS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+const CLAUDE_TASKS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'tasks');
 
 // --- Functions ---
 
@@ -136,6 +139,110 @@ async function syncFile(parsedFile: IParsedFile): Promise<number> {
 }
 
 /**
+ * Sync all MEMORY.md files from ~/.claude/projects/{project}/memory/ to MongoDB
+ * Always replaces content — memory files change frequently
+ * Returns new inserts (synced) and pre-existing updates (updated) counts
+ */
+async function syncMemory(): Promise<{ synced: number; updated: number }> {
+    if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) {
+        return {synced: 0, updated: 0};
+    }
+
+    const projectDirs: fs.Dirent[] = fs.readdirSync(CLAUDE_PROJECTS_DIR, {withFileTypes: true})
+        .filter((entry: fs.Dirent) => entry.isDirectory());
+
+    let synced: number = 0;
+    let updated: number = 0;
+
+    for (const projectDir of projectDirs) {
+        const memoryFilePath: string = path.join(CLAUDE_PROJECTS_DIR, projectDir.name, 'memory', 'MEMORY.md');
+        if (!fs.existsSync(memoryFilePath)) {
+            continue;
+        }
+
+        try {
+            const content: string = fs.readFileSync(memoryFilePath, 'utf-8');
+
+            const existing = await MemoryModel.findOneAndUpdate(
+                {filePath: memoryFilePath},
+                {
+                    projectDir: projectDir.name,
+                    filePath: memoryFilePath,
+                    content,
+                },
+                {upsert: true, returnDocument: 'before'},
+            );
+
+            if (existing === null) {
+                synced++;
+            } else {
+                updated++;
+            }
+        } catch (error: unknown) {
+            console.error(`  Error: ${projectDir.name}/memory/MEMORY.md — ${error}`.red);
+        }
+    }
+
+    return {synced, updated};
+}
+
+/**
+ * Sync all tasks from ~/.claude/tasks/ to MongoDB
+ * Upserts each task — status/description may have changed since last sync
+ * Returns new inserts (synced) and pre-existing updates (updated) counts
+ */
+async function syncTasks(): Promise<{ synced: number; updated: number }> {
+    if (!fs.existsSync(CLAUDE_TASKS_DIR)) {
+        return {synced: 0, updated: 0};
+    }
+
+    const sessionDirectories: fs.Dirent[] = fs.readdirSync(CLAUDE_TASKS_DIR, {withFileTypes: true})
+        .filter((entry: fs.Dirent) => entry.isDirectory());
+
+    let synced: number = 0;
+    let updated: number = 0;
+
+    for (const sessionDirectory of sessionDirectories) {
+        const sessionId: string = sessionDirectory.name;
+        const sessionPath: string = path.join(CLAUDE_TASKS_DIR, sessionId);
+        const taskFiles: string[] = fs.readdirSync(sessionPath)
+            .filter((name: string) => name.endsWith('.json'));
+
+        for (const taskFile of taskFiles) {
+            try {
+                const raw: string = fs.readFileSync(path.join(sessionPath, taskFile), 'utf-8');
+                const task: RawTask = JSON.parse(raw) as RawTask;
+
+                const existing = await TaskModel.findOneAndUpdate(
+                    {sessionId, id: task.id},
+                    {
+                        sessionId,
+                        id: task.id,
+                        subject: task.subject,
+                        description: task.description,
+                        activeForm: task.activeForm,
+                        status: task.status,
+                        blocks: task.blocks ?? [],
+                        blockedBy: task.blockedBy ?? [],
+                    },
+                    {upsert: true, returnDocument: 'before'},
+                );
+
+                if (existing === null) {
+                    synced++;
+                } else {
+                    updated++;
+                }
+            } catch (error: unknown) {
+                console.error(`  Error: ${taskFile} (session: ${sessionId}) — ${error}`.red);
+            }
+        }
+    }
+
+    return {synced, updated};
+}
+
+/**
  * Main orchestrator
  */
 async function main(): Promise<void> {
@@ -147,10 +254,10 @@ async function main(): Promise<void> {
     // 2. Find JSONL files
     const files: string[] = findJsonlFiles(directories);
     if (files.length === 0) {
-        console.log('No .jsonl files found. Nothing to sync.'.yellow);
-        process.exit(0);
+        console.log('\nNo .jsonl files found. Skipping conversations.'.yellow);
+    } else {
+        console.log(`\nFound ${files.length} conversation file(s)\n`.green);
     }
-    console.log(`\nFound ${files.length} conversation file(s)\n`.green);
 
     // 3. Connect to MongoDB
     await connectDB();
@@ -189,12 +296,24 @@ async function main(): Promise<void> {
         }
     }
 
+    // --- Sync Tasks ---
+    console.log('\n--- Sync Tasks ---'.blue);
+    const taskResult: { synced: number; updated: number } = await syncTasks();
+    console.log(`  New: ${taskResult.synced}  Updated: ${taskResult.updated}`.green);
+
+    // --- Sync Memory ---
+    console.log('\n--- Sync Memory ---'.blue);
+    const memoryResult: { synced: number; updated: number } = await syncMemory();
+    console.log(`  New: ${memoryResult.synced}  Updated: ${memoryResult.updated}`.green);
+
     // 5. Summary
     console.log('\n=== Sync Complete ==='.blue.bold);
     console.log(`  Files synced: ${totalSynced}`.green);
     console.log(`  New messages: ${totalNew}`.green);
     if (totalSkipped > 0) console.log(`  Skipped: ${totalSkipped}`.yellow);
     if (totalErrors > 0) console.log(`  Errors: ${totalErrors}`.red);
+    console.log(`  Tasks — new: ${taskResult.synced}, updated: ${taskResult.updated}`.green);
+    console.log(`  Memory — new: ${memoryResult.synced}, updated: ${memoryResult.updated}`.green);
 
     // 6. Disconnect
     await closeConnection();

@@ -21,3 +21,13 @@ export interface IParsedFile {
     title: string;
     messages: IParsedMessage[];
 }
+
+export interface RawTask {
+    id: string;
+    subject: string;
+    description: string;
+    activeForm?: string;
+    status: string;
+    blocks: string[];
+    blockedBy: string[];
+}
