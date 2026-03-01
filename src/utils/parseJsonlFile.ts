@@ -7,6 +7,12 @@ import {IParsedFile, IParsedMessage} from "../types/sync";
 
 const TITLE_MAX_LENGTH: number = 100;
 
+// --- Sync filters ---
+// Toggle these to control what gets stored in MongoDB
+// Comment out a line to disable that filter (i.e. store everything)
+const STRIP_THINKING_BLOCKS: boolean = true;    // thinking blocks are large and not displayed in UI
+const STRIP_TOOL_RESULTS: boolean = false;      // tool results provide useful context for viewing
+
 // --- Function ---
 
 /**
@@ -82,11 +88,18 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             aiModel = message.model as string;
         }
 
+        // Apply sync filters to assistant content blocks
+        let content: string | Record<string, unknown>[] = message.content as string | Record<string, unknown>[];
+        if (Array.isArray(content)) {
+            if (STRIP_THINKING_BLOCKS) content = content.filter((block) => (block as Record<string, unknown>).type !== 'thinking');
+            if (STRIP_TOOL_RESULTS) content = content.filter((block) => (block as Record<string, unknown>).type !== 'tool_result');
+        }
+
         // Build parsedLine message
         const parsedMessage: IParsedMessage = {
             uuid: parsedLine.uuid as string,
             role: messageRole,
-            content: message.content as string | Record<string, unknown>[],
+            content,
             timestamp: new Date(parsedLine.timestamp as string),
         };
 
