@@ -11,7 +11,7 @@ import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
 import {closeConnection, connectDB} from "../config/connectDB";
 import {IParsedFile, IParsedMessage, RawTask} from "../types/sync";
-import ConversationModel, {EConversationSource} from "../models/Conversation";
+import SessionModel, {ESessionSource} from "../models/Session";
 
 // --- Constants ---
 
@@ -88,12 +88,12 @@ async function promptForPaths(): Promise<string[]> {
 
 /**
  * Sync a single parsedFile file to MongoDB
- * Upserts conversation, incrementally inserts only new messages
+ * Upserts session, incrementally inserts only new messages
  * Returns count of new messages inserted
  */
 async function syncFile(parsedFile: IParsedFile): Promise<number> {
-    // 1. Upsert conversation
-    const conversation = await ConversationModel.findOneAndUpdate(
+    // 1. Upsert session
+    const session = await SessionModel.findOneAndUpdate(
         {sessionId: parsedFile.sessionId},
         {
             title: parsedFile.title,
@@ -101,16 +101,16 @@ async function syncFile(parsedFile: IParsedFile): Promise<number> {
             projectDir: parsedFile.projectDir,
             gitBranch: parsedFile.gitBranch,
             slug: parsedFile.slug,
-            source: EConversationSource.TERMINAL,
+            source: ESessionSource.TERMINAL,
         },
         {upsert: true, returnDocument: 'after'},
     );
 
-    const conversationId: Types.ObjectId = conversation._id as Types.ObjectId;
+    const sessionInternalId: Types.ObjectId = session._id as Types.ObjectId;
 
-    // 2. Get existing message UUIDs for this conversation
+    // 2. Get existing message UUIDs for this session
     const existingDocs = await MessageModel.find(
-        {conversationId},
+        {sessionInternalId},
         {uuid: 1},
     ).lean();
     const existingUuids: Set<string> = new Set(
@@ -122,7 +122,7 @@ async function syncFile(parsedFile: IParsedFile): Promise<number> {
         .filter((parsedMessage: IParsedMessage) => !existingUuids.has(parsedMessage.uuid))
         .map((parsedMessage: IParsedMessage) => ({
             uuid: parsedMessage.uuid,
-            conversationId,
+            sessionInternalId,
             role: parsedMessage.role,
             content: parsedMessage.content,
             aiModel: parsedMessage.aiModel,
@@ -254,9 +254,9 @@ async function main(): Promise<void> {
     // 2. Find JSONL files
     const files: string[] = findJsonlFiles(directories);
     if (files.length === 0) {
-        console.log('\nNo .jsonl files found. Skipping conversations.'.yellow);
+        console.log('\nNo .jsonl files found. Skipping sessions.'.yellow);
     } else {
-        console.log(`\nFound ${files.length} conversation file(s)\n`.green);
+        console.log(`\nFound ${files.length} session file(s)\n`.green);
     }
 
     // 3. Connect to MongoDB

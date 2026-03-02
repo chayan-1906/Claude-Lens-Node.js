@@ -1,33 +1,33 @@
 import {Document, Model, model, Schema} from "mongoose";
 
-export enum EConversationSource {
+export enum ESessionSource {
     TERMINAL = 'terminal',
     WEBUI = 'webui',
 }
 
 /**
- * Conversation document interface
+ * Session document interface
  * One document per ~/.claude/projects/{project}/{sessionId}.jsonl file
  */
-export interface IConversation extends Document {
-    conversationId: string;   // derived from _id via toJSON (not stored)
+export interface ISession extends Document {
+    sessionInternalId: string;   // derived from _id via toJSON (not stored)
     sessionId: string;        // JSONL filename UUID — unique key for upsert
     title: string;            // first user message, truncated
     aiModel?: string;         // primary model used (from first assistant message)
     projectDir: string;       // cwd from JSONL envelope
     gitBranch?: string;       // gitBranch from JSONL envelope
     slug?: string;            // human-readable session name e.g. "golden-toasting-penguin"
-    source: EConversationSource;
+    source: ESessionSource;
     createdAt: Date;
     updatedAt: Date;
 }
 
-/** Conversation model interface */
-interface IConversationModel extends Model<IConversation> {
+/** Session model interface */
+interface ISessionModel extends Model<ISession> {
 }
 
-/** Mongoose schema for Claude Code conversations */
-const ConversationSchema = new Schema<IConversation>({
+/** Mongoose schema for Claude Code sessions */
+const SessionSchema = new Schema<ISession>({
     sessionId: {
         type: String,
         required: true,
@@ -54,8 +54,8 @@ const ConversationSchema = new Schema<IConversation>({
     },
     source: {
         type: String,
-        enum: Object.values(EConversationSource),
-        default: EConversationSource.TERMINAL,
+        enum: Object.values(ESessionSource),
+        default: ESessionSource.TERMINAL,
     },
 }, {
     timestamps: true,
@@ -64,13 +64,13 @@ const ConversationSchema = new Schema<IConversation>({
             const {_id, __v, ...rest} = ret;
             return {
                 ...rest,
-                conversationId: String(_id),
+                sessionInternalId: String(_id),
             };
         },
     },
 });
 
-/** Mongoose model for Claude Code conversations */
-const ConversationModel: IConversationModel = model<IConversation, IConversationModel>('Conversation', ConversationSchema);
+/** Mongoose model for Claude Code sessions */
+const SessionModel: ISessionModel = model<ISession, ISessionModel>('Session', SessionSchema);
 
-export default ConversationModel;
+export default SessionModel;

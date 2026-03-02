@@ -16,7 +16,7 @@ const STRIP_TOOL_RESULTS: boolean = false;      // tool results provide useful c
 // --- Function ---
 
 /**
- * Parse a single JSONL file into structured conversation data
+ * Parse a single JSONL file into structured session data
  * Returns null if file has no user/assistant messages
  */
 function parseJsonlFile(filePath: string): IParsedFile | null {
@@ -83,7 +83,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
                 : message.content;
         }
 
-        // Extract aiModel from first assistant message (for conversation-level)
+        // Extract aiModel from first assistant message (for session-level)
         if (!aiModel && messageRole === EMessageRole.ASSISTANT && message.model) {
             aiModel = message.model as string;
         }
@@ -128,7 +128,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         gitBranch,
         slug,
         aiModel,
-        title: customTitle || slug || firstUserMessage || 'Untitled conversation',
+        title: customTitle || slug || firstUserMessage || 'Untitled session',
         messages,
     };
 }

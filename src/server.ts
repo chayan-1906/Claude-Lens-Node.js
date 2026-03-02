@@ -5,7 +5,7 @@ import express, {Express} from 'express';
 import {PORT} from "./config/config";
 import {connectDB} from "./config/connectDB";
 import {getLocalIP} from "./utils/getLocalIP";
-import conversationRoutes from "./routes/ConversationRoutes";
+import sessionRoutes from "./routes/SessionRoutes";
 
 // rest object
 const app: Express = express();
@@ -15,7 +15,7 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // routes
-app.use('/api/v1/conversations', conversationRoutes);
+app.use('/api/v1/sessions', sessionRoutes);
 app.get('/', function (req, res) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');
 });

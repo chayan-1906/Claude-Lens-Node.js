@@ -40,7 +40,7 @@ export enum EMessageRole {
 export interface IMessage extends Document {
     messageId: string;                      // derived from _id via toJSON (not stored)
     uuid: string;                           // JSONL envelope uuid — deduplication key for re-sync
-    conversationId: Types.ObjectId;         // ref: Conversation
+    sessionInternalId: Types.ObjectId;         // ref: Session
     role: EMessageRole;
     content: string | ContentBlock[];
     aiModel?: string;                       // present only on assistant messages
@@ -65,9 +65,9 @@ const MessageSchema = new Schema<IMessage>({
         unique: true,
         index: true,
     },
-    conversationId: {
+    sessionInternalId: {
         type: Schema.Types.ObjectId,
-        ref: 'Conversation',
+        ref: 'Session',
         required: true,
         index: true,
     },
