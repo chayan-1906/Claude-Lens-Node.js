@@ -1,4 +1,5 @@
 import "colors";
+import mongoose from "mongoose";
 import MessageModel from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
 import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
@@ -62,14 +63,42 @@ class SessionService {
         return {projects};
     }
 
-    /*static async deleteSession(sessionId: string): Promise<IDeleteSessionResponse> {
+    static async deleteSession(sessionId: string): Promise<IDeleteSessionResponse> {
         console.log('Service: SessionService.deleteSession called'.cyan.italic, sessionId);
 
-        const deletedSessionCount = await SessionModel.deleteBy;
-        console.log('Database: Session deleted'.cyan, deletedCount);
+        if (!sessionId) {
+            return {error: generateInvalidCode('sessionId')};
+        }
 
-        return {}
-    }*/
+        const session: ISession | null = await SessionModel.findOne({sessionId});
+        if (!session) {
+            return {error: generateNotFoundCode('session')};
+        }
+
+        const mongoSession = await mongoose.startSession();
+        try {
+            mongoSession.startTransaction();
+
+            const {deletedCount: deletedMessagesCount} = await MessageModel.deleteMany(
+                {sessionInternalId: session._id},
+                {session: mongoSession},
+            );
+            const {deletedCount: deletedSessionCount} = await SessionModel.deleteOne(
+                {sessionId},
+                {session: mongoSession},
+            );
+
+            await mongoSession.commitTransaction();
+            console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedMessagesCount});
+
+            return {deletedSessions: deletedSessionCount, deletedMessages: deletedMessagesCount};
+        } catch (error: unknown) {
+            await mongoSession.abortTransaction();
+            throw error;
+        } finally {
+            await mongoSession.endSession();
+        }
+    }
 }
 
 export default SessionService;

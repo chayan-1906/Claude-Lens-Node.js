@@ -5,6 +5,8 @@ import express, {Express} from 'express';
 import {PORT} from "./config/config";
 import {connectDB} from "./config/connectDB";
 import {getLocalIP} from "./utils/getLocalIP";
+import taskRoutes from "./routes/TaskRoutes";
+import memoryRoutes from "./routes/MemoryRoutes";
 import sessionRoutes from "./routes/SessionRoutes";
 
 // rest object
@@ -16,6 +18,8 @@ app.use(morgan('dev'));
 
 // routes
 app.use('/api/v1/sessions', sessionRoutes);
+app.use('/api/v1/tasks', taskRoutes);
+app.use('/api/v1/memories', memoryRoutes);
 app.get('/', function (req, res) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');
 });

@@ -57,3 +57,7 @@ export interface IGetAllSessionsParams {
 export interface IGetSessionParams {
     sessionId: string;
 }
+
+export interface IDeleteSessionParams {
+    sessionId: string;
+}
