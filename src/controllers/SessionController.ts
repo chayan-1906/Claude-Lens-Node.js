@@ -4,7 +4,7 @@ import {ApiResponse} from "../utils/ApiResponse";
 import {ESessionSource} from "../models/Session";
 import SessionService from "../services/SessionService";
 import {IDeleteSessionParams, IGetSessionParams} from "../types/session";
-import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 
 const VALID_SOURCES: string[] = Object.values(ESessionSource);
 
@@ -157,4 +157,58 @@ const deleteSessionController = async (req: Request, res: Response) => {
     }
 }
 
-export {getAllSessionsController, getSessionController, getProjectsController, deleteSessionController};
+const deleteProjectController = async (req: Request, res: Response) => {
+    console.info('Controller: deleteProjectController started'.bgBlue.white.bold);
+
+    try {
+        const {projectDir} = req.query as Record<string, string | undefined>;
+
+        if (!projectDir) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('projectDir'),
+                errorMsg: 'projectDir query parameter is required!',
+            }));
+            return;
+        }
+
+        const {deletedSessions, deletedMessages, deletedTasks, deletedMemories, error} = await SessionService.deleteProject(projectDir);
+        if (error) {
+            let errorMsg: string = 'Failed to delete project!';
+            let statusCode: number = 500;
+
+            if (error === generateMissingCode('projectDir')) {
+                statusCode = 400;
+                errorMsg = 'projectDir is required!';
+            } else if (error === generateNotFoundCode('project')) {
+                statusCode = 404;
+                errorMsg = `No data found for projectDir: ${projectDir}!`;
+            }
+
+            res.status(statusCode).send(new ApiResponse({
+                success: false,
+                errorCode: error,
+                errorMsg,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: Project deleted'.bgGreen.bold, {projectDir, deletedSessions, deletedMessages, deletedTasks, deletedMemories});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Project has been deleted!',
+            deletedSessions,
+            deletedMessages,
+            deletedTasks,
+            deletedMemories,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: deleteProjectController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while deleting the project!',
+        }));
+    }
+}
+
+export {getAllSessionsController, getSessionController, getProjectsController, deleteSessionController, deleteProjectController};

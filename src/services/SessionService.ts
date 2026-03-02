@@ -1,9 +1,11 @@
 import "colors";
 import mongoose from "mongoose";
+import TaskModel from "../models/Task";
+import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
-import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetProjectsResponse, IGetSessionResponse, IPagination} from "../types/session";
+import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+import {IDeleteProjectResponse, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetProjectsResponse, IGetSessionResponse, IPagination} from "../types/session";
 
 class SessionService {
     static async getAllSessions({title, source, projectDir, page = 1, limit = 20}: IGetAllSessionsParams): Promise<IGetAllSessionsResponse> {
@@ -92,6 +94,66 @@ class SessionService {
             console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedMessagesCount});
 
             return {deletedSessions: deletedSessionCount, deletedMessages: deletedMessagesCount};
+        } catch (error: unknown) {
+            await mongoSession.abortTransaction();
+            throw error;
+        } finally {
+            await mongoSession.endSession();
+        }
+    }
+
+    static async deleteProject(projectDir: string): Promise<IDeleteProjectResponse> {
+        console.log('Service: SessionService.deleteProject called'.cyan.italic, projectDir);
+
+        if (!projectDir) {
+            return {error: generateMissingCode('projectDir')};
+        }
+
+        // Gather sessions for this project to derive related IDs
+        const sessions = await SessionModel.find({projectDir}, {_id: 1, sessionId: 1}).lean();
+
+        // Convert cwd-format projectDir to dash-separated Memory format
+        // e.g. "/Users/padmanabhadas/Chayan_Personal/NodeJs" → "-Users-padmanabhadas-Chayan-Personal-NodeJs"
+        const memoryProjectDir: string = projectDir.replace(/[^a-zA-Z0-9]/g, '-');
+        const memoryCount: number = await MemoryModel.countDocuments({projectDir: memoryProjectDir});
+
+        if (sessions.length === 0 && memoryCount === 0) {
+            return {error: generateNotFoundCode('project')};
+        }
+
+        const sessionInternalIds = sessions.map((s) => s._id);
+        const sessionIds: string[] = sessions.map((s) => s.sessionId);
+
+        const mongoSession = await mongoose.startSession();
+        try {
+            mongoSession.startTransaction();
+
+            const {deletedCount: deletedMessagesCount} = await MessageModel.deleteMany(
+                {sessionInternalId: {$in: sessionInternalIds}},
+                {session: mongoSession},
+            );
+            const {deletedCount: deletedTasksCount} = await TaskModel.deleteMany(
+                {sessionId: {$in: sessionIds}},
+                {session: mongoSession},
+            );
+            const {deletedCount: deletedMemoriesCount} = await MemoryModel.deleteMany(
+                {projectDir: memoryProjectDir},
+                {session: mongoSession},
+            );
+            const {deletedCount: deletedSessionsCount} = await SessionModel.deleteMany(
+                {projectDir},
+                {session: mongoSession},
+            );
+
+            await mongoSession.commitTransaction();
+            console.log('Database: Project deleted'.cyan, {projectDir, deletedSessionsCount, deletedMessagesCount, deletedTasksCount, deletedMemoriesCount});
+
+            return {
+                deletedSessions: deletedSessionsCount,
+                deletedMessages: deletedMessagesCount,
+                deletedTasks: deletedTasksCount,
+                deletedMemories: deletedMemoriesCount,
+            };
         } catch (error: unknown) {
             await mongoSession.abortTransaction();
             throw error;
