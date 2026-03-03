@@ -9,9 +9,10 @@ import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
+import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
+import SessionModel, {ESessionSource} from "../models/Session";
 import {closeConnection, connectDB} from "../config/connectDB";
 import {IParsedFile, IParsedMessage, RawTask} from "../types/sync";
-import SessionModel, {ESessionSource} from "../models/Session";
 
 // --- Constants ---
 
@@ -61,7 +62,7 @@ async function promptForPaths(): Promise<string[]> {
     for (const p of paths) {
         // First: try converting real project path to Claude projects directory
         // /Users/padmanabhadas/Chayan_Personal/NodeJs → -Users-padmanabhadas-Chayan-Personal-NodeJs
-        const claudeDirName: string = p.replace(/[^a-zA-Z0-9]/g, '-');
+        const claudeDirName: string = p.replace(NON_ALPHANUMERIC_REGEX, '-');
         const claudePath: string = path.join(CLAUDE_PROJECTS_DIR, claudeDirName);
         if (fs.existsSync(claudePath) && fs.statSync(claudePath).isDirectory()) {
             validPaths.push(claudePath);

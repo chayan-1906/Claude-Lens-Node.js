@@ -2,8 +2,80 @@ import "colors";
 import {Request, Response} from "express";
 import {ApiResponse} from "../utils/ApiResponse";
 import TaskService from "../services/TaskService";
-import {IDeleteTasksBySessionParams} from "../types/task";
+import {IDeleteTasksBySessionParams, IGetTaskParams} from "../types/task";
 import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+
+const getAllTasksController = async (req: Request, res: Response) => {
+    console.info('Controller: getAllTasksController started'.bgBlue.white.bold);
+
+    try {
+        const {sessionId} = req.query as Record<string, string | undefined>;
+
+        const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+
+        const {tasks, pagination} = await TaskService.getAllTasks({sessionId, page, limit});
+
+        console.log('SUCCESS: Tasks fetched'.bgGreen.bold, {tasks: tasks.length});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Tasks have been fetched!',
+            tasks,
+            pagination,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getAllTasksController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while retrieving tasks!',
+        }));
+    }
+}
+
+const getTaskController = async (req: Request, res: Response) => {
+    console.info('Controller: getTaskController started'.bgBlue.white.bold);
+
+    try {
+        const {sessionId, taskId}: Partial<IGetTaskParams> = req.params;
+
+        const {task, error} = await TaskService.getTask({sessionId, taskId});
+        if (error || !task) {
+            let errorMsg: string = 'Failed to retrieve task!';
+            let statusCode: number = 500;
+
+            if (error === generateInvalidCode('sessionId')) {
+                statusCode = 400;
+                errorMsg = `Invalid sessionId: ${sessionId}!`;
+            } else if (error === generateInvalidCode('taskId')) {
+                statusCode = 400;
+                errorMsg = `Invalid taskId: ${taskId}!`;
+            } else if (error === generateNotFoundCode('task')) {
+                statusCode = 404;
+                errorMsg = `No task found for sessionId: ${sessionId}, taskId: ${taskId}!`;
+            }
+
+            res.status(statusCode).send(new ApiResponse({
+                success: false,
+                errorCode: error,
+                errorMsg,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: Task fetched'.bgGreen.bold, {sessionId, taskId});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Task has been fetched!',
+            task,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getTaskController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while retrieving the task!',
+        }));
+    }
+}
 
 const deleteTasksBySessionIdController = async (req: Request, res: Response) => {
     console.info('Controller: deleteTasksBySessionIdController started'.bgBlue.white.bold);
@@ -11,7 +83,7 @@ const deleteTasksBySessionIdController = async (req: Request, res: Response) => 
     try {
         const {sessionId}: Partial<IDeleteTasksBySessionParams> = req.params;
 
-        const {deletedTasks, error} = await TaskService.deleteTasksBySessionId(sessionId || '');
+        const {deletedTasks, error} = await TaskService.deleteTasksBySessionId({sessionId});
         if (error) {
             let errorMsg: string = 'Failed to delete tasks!';
             let statusCode: number = 500;
@@ -47,31 +119,4 @@ const deleteTasksBySessionIdController = async (req: Request, res: Response) => 
     }
 }
 
-const getAllTasksController = async (req: Request, res: Response) => {
-    console.info('Controller: getAllTasksController started'.bgBlue.white.bold);
-
-    try {
-        const {sessionId} = req.query as Record<string, string | undefined>;
-
-        const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
-
-        const {tasks, pagination} = await TaskService.getAllTasks({sessionId, page, limit});
-
-        console.log('SUCCESS: Tasks fetched'.bgGreen.bold, {tasks: tasks.length});
-        res.status(200).send(new ApiResponse({
-            success: true,
-            message: 'Tasks have been fetched!',
-            tasks,
-            pagination,
-        }));
-    } catch (error: any) {
-        console.error('Controller Error: getAllTasksController failed'.red.bold, error);
-        res.status(500).send(new ApiResponse({
-            success: false,
-            errorMsg: error.message || 'Something went wrong while retrieving tasks!',
-        }));
-    }
-}
-
-export {getAllTasksController, deleteTasksBySessionIdController};
+export {getAllTasksController, getTaskController, deleteTasksBySessionIdController};

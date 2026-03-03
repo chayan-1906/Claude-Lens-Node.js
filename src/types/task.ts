@@ -4,12 +4,16 @@ import {IPagination} from "./session";
 /** ------------- Constants and Type Aliases ------------- */
 
 
-
 /** ------------- API response types ------------- */
 
 export interface IGetAllTasksResponse {
     tasks: ITask[];
     pagination: IPagination;
+}
+
+export interface IGetTaskResponse {
+    task?: ITask;
+    error?: string;
 }
 
 export interface IDeleteTasksBySessionResponse {
@@ -26,6 +30,11 @@ export interface IGetAllTasksParams {
     limit?: number;
 }
 
+export interface IGetTaskParams {
+    sessionId?: string;
+    taskId?: string;
+}
+
 export interface IDeleteTasksBySessionParams {
-    sessionId: string;
+    sessionId?: string;
 }

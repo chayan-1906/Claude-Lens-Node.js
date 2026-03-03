@@ -12,9 +12,9 @@ export enum ETaskStatus {
  * One document per ~/.claude/tasks/{sessionId}/[taskNumber].json file
  */
 export interface ITask extends Document {
-    taskId: string;     // derived from _id via toJSON
-    sessionId: string;  // directory name under ~/.claude/tasks/
-    id: string;         // task number within session ("1", "2", ...)
+    taskInternalId: string;     // derived from _id via toJSON
+    sessionId: string;          // directory name under ~/.claude/tasks/
+    taskId: string;             // task number within session ("1", "2", ...)
     subject: string;
     description: string;
     activeForm?: string;
@@ -36,7 +36,7 @@ const TaskSchema = new Schema<ITask>({
         required: true,
         index: true,
     },
-    id: {
+    taskId: {
         type: String,
         required: true,
         trim: true,
@@ -75,13 +75,13 @@ const TaskSchema = new Schema<ITask>({
             const {_id, __v, ...rest} = ret;
             return {
                 ...rest,
-                taskId: String(_id),
+                taskInternalId: String(_id),
             };
         },
     },
 });
 
-TaskSchema.index({sessionId: 1, id: 1}, {unique: true});
+TaskSchema.index({sessionId: 1, taskId: 1}, {unique: true});
 
 /** Mongoose model for Claude Code tasks */
 const TaskModel: ITaskModel = model<ITask, ITaskModel>('Task', TaskSchema);

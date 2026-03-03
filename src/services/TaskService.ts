@@ -2,7 +2,7 @@ import "colors";
 import {IPagination} from "../types/session";
 import TaskModel, {ITask} from "../models/Task";
 import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteTasksBySessionResponse, IGetAllTasksParams, IGetAllTasksResponse} from "../types/task";
+import {IDeleteTasksBySessionParams, IDeleteTasksBySessionResponse, IGetAllTasksParams, IGetAllTasksResponse, IGetTaskParams, IGetTaskResponse} from "../types/task";
 
 class TaskService {
     static async getAllTasks({sessionId, page = 1, limit = 20}: IGetAllTasksParams): Promise<IGetAllTasksResponse> {
@@ -33,7 +33,27 @@ class TaskService {
         return {tasks, pagination};
     }
 
-    static async deleteTasksBySessionId(sessionId: string): Promise<IDeleteTasksBySessionResponse> {
+    static async getTask({sessionId, taskId}: IGetTaskParams): Promise<IGetTaskResponse> {
+        console.log('Service: TaskService.getTask called'.cyan.italic, {sessionId, taskId});
+
+        if (!sessionId) {
+            return {error: generateInvalidCode('sessionId')};
+        }
+        if (!taskId) {
+            return {error: generateInvalidCode('taskId')};
+        }
+
+        const task: ITask | null = await TaskModel.findOne({sessionId, taskId});
+        if (!task) {
+            return {error: generateNotFoundCode('task')};
+        }
+
+        console.log('Database: Task fetched'.cyan, {sessionId, taskId});
+
+        return {task};
+    }
+
+    static async deleteTasksBySessionId({sessionId}: IDeleteTasksBySessionParams): Promise<IDeleteTasksBySessionResponse> {
         console.log('Service: TaskService.deleteTasksBySessionId called'.cyan.italic, sessionId);
 
         if (!sessionId) {

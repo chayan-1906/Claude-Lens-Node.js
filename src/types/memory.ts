@@ -1,5 +1,5 @@
-import {IMemory} from "../models/Memory";
 import {IPagination} from "./session";
+import {IMemory} from "../models/Memory";
 
 /** ------------- Constants and Type Aliases ------------- */
 
@@ -10,6 +10,11 @@ import {IPagination} from "./session";
 export interface IGetAllMemoriesResponse {
     memories: IMemory[];
     pagination: IPagination;
+}
+
+export interface IGetMemoryResponse {
+    memory?: IMemory;
+    error?: string;
 }
 
 export interface IDeleteMemoryByProjectResponse {
@@ -24,4 +29,8 @@ export interface IGetAllMemoriesParams {
     projectDir?: string;
     page?: number;
     limit?: number;
+}
+
+export interface IGetMemoryParams {
+    projectDir?: string;
 }
