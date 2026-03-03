@@ -5,7 +5,7 @@ import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteProjectResponse, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetProjectsResponse, IGetSessionResponse, IPagination} from "../types/session";
+import {IDeleteProjectResponse, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetAllProjectsResponse, IGetSessionResponse, IPagination} from "../types/session";
 
 class SessionService {
     static async getAllSessions({title, source, projectDir, page = 1, limit = 20}: IGetAllSessionsParams): Promise<IGetAllSessionsResponse> {
@@ -56,8 +56,8 @@ class SessionService {
         return {session, messages};
     }
 
-    static async getProjects(): Promise<IGetProjectsResponse> {
-        console.log('Service: SessionService.getProjects called'.cyan.italic);
+    static async getAllProjects(): Promise<IGetAllProjectsResponse> {
+        console.log('Service: SessionService.getAllProjects called'.cyan.italic);
 
         const projects: string[] = await SessionModel.distinct('projectDir');
         console.log('Database: Projects fetched'.cyan, projects.length);

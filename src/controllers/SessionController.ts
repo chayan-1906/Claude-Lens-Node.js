@@ -93,11 +93,11 @@ const getSessionController = async (req: Request, res: Response) => {
     }
 }
 
-const getProjectsController = async (req: Request, res: Response) => {
-    console.info('Controller: getProjectsController started'.bgBlue.white.bold);
+const getAllProjectsController = async (req: Request, res: Response) => {
+    console.info('Controller: getAllProjectsController started'.bgBlue.white.bold);
 
     try {
-        const {projects} = await SessionService.getProjects();
+        const {projects} = await SessionService.getAllProjects();
 
         console.log('SUCCESS: Projects fetched'.bgGreen.bold, {projects: projects.length});
         res.status(200).send(new ApiResponse({
@@ -106,7 +106,7 @@ const getProjectsController = async (req: Request, res: Response) => {
             projects,
         }));
     } catch (error: any) {
-        console.error('Controller Error: getProjectsController failed'.red.bold, error);
+        console.error('Controller Error: getAllProjectsController failed'.red.bold, error);
         res.status(500).send(new ApiResponse({
             success: false,
             errorMsg: error.message || 'Something went wrong while retrieving projects!',
@@ -211,4 +211,4 @@ const deleteProjectController = async (req: Request, res: Response) => {
     }
 }
 
-export {getAllSessionsController, getSessionController, getProjectsController, deleteSessionController, deleteProjectController};
+export {getAllSessionsController, getSessionController, getAllProjectsController, deleteSessionController, deleteProjectController};

@@ -55,4 +55,31 @@ const deleteMemoryByProjectDirController = async (req: Request, res: Response) =
     }
 }
 
-export {deleteMemoryByProjectDirController};
+const getAllMemoriesController = async (req: Request, res: Response) => {
+    console.info('Controller: getAllMemoriesController started'.bgBlue.white.bold);
+
+    try {
+        const {projectDir} = req.query as Record<string, string | undefined>;
+
+        const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+
+        const {memories, pagination} = await MemoryService.getAllMemories({projectDir, page, limit});
+
+        console.log('SUCCESS: Memories fetched'.bgGreen.bold, {memories: memories.length});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Memories have been fetched!',
+            memories,
+            pagination,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getAllMemoriesController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while retrieving memories!',
+        }));
+    }
+}
+
+export {getAllMemoriesController, deleteMemoryByProjectDirController};

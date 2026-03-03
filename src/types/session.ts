@@ -25,7 +25,7 @@ export interface IGetSessionResponse {
     error?: string;
 }
 
-export interface IGetProjectsResponse {
+export interface IGetAllProjectsResponse {
     projects: string[];
 }
 

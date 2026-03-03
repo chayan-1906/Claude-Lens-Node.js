@@ -47,4 +47,31 @@ const deleteTasksBySessionIdController = async (req: Request, res: Response) => 
     }
 }
 
-export {deleteTasksBySessionIdController};
+const getAllTasksController = async (req: Request, res: Response) => {
+    console.info('Controller: getAllTasksController started'.bgBlue.white.bold);
+
+    try {
+        const {sessionId} = req.query as Record<string, string | undefined>;
+
+        const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+
+        const {tasks, pagination} = await TaskService.getAllTasks({sessionId, page, limit});
+
+        console.log('SUCCESS: Tasks fetched'.bgGreen.bold, {tasks: tasks.length});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Tasks have been fetched!',
+            tasks,
+            pagination,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getAllTasksController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while retrieving tasks!',
+        }));
+    }
+}
+
+export {getAllTasksController, deleteTasksBySessionIdController};

@@ -1,11 +1,11 @@
 import {Router} from "express";
-import {getAllSessionsController, getProjectsController, getSessionController, deleteSessionController, deleteProjectController} from "../controllers/SessionController";
+import {deleteProjectController, deleteSessionController, getAllProjectsController, getAllSessionsController, getSessionController} from "../controllers/SessionController";
 
 const router: Router = Router();
 
 router.get('/', getAllSessionsController);
+router.get('/projects', getAllProjectsController);
 router.get('/:sessionId', getSessionController);
-router.get('/projects', getProjectsController);
 router.delete('/:sessionId', deleteSessionController);
 router.delete('/projects', deleteProjectController);
 
