@@ -31,6 +31,7 @@ export interface IGetAllProjectsResponse {
 
 export interface IDeleteSessionResponse {
     deletedSessions?: number;
+    deletedTasks?: number;
     deletedMessages?: number;
     error?: string;
 }
@@ -55,9 +56,13 @@ export interface IGetAllSessionsParams {
 }
 
 export interface IGetSessionParams {
-    sessionId: string;
+    sessionId?: string;
+}
+
+export interface IDeleteProjectParams {
+    projectDir?: string;
 }
 
 export interface IDeleteSessionParams {
-    sessionId: string;
+    sessionId?: string;
 }

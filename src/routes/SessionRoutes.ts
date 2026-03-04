@@ -7,6 +7,6 @@ router.get('/', getAllSessionsController);
 router.get('/projects', getAllProjectsController);
 router.get('/:sessionId', getSessionController);
 router.delete('/:sessionId', deleteSessionController);
-router.delete('/projects', deleteProjectController);
+router.delete('/projects/:projectDir', deleteProjectController);
 
 export default router;

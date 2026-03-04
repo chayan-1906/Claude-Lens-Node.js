@@ -40,7 +40,7 @@ export enum EMessageRole {
 export interface IMessage extends Document {
     messageId: string;                      // derived from _id via toJSON (not stored)
     uuid: string;                           // JSONL envelope uuid — deduplication key for re-sync
-    sessionInternalId: Types.ObjectId;         // ref: Session
+    sessionInternalId: Types.ObjectId;      // ref: Session
     role: EMessageRole;
     content: string | ContentBlock[];
     aiModel?: string;                       // present only on assistant messages

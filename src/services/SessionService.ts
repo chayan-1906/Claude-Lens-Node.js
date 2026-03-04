@@ -1,11 +1,23 @@
 import "colors";
-import mongoose from "mongoose";
+import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteProjectResponse, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetAllProjectsResponse, IGetSessionResponse, IPagination} from "../types/session";
+import {
+    IDeleteProjectParams,
+    IDeleteProjectResponse,
+    IDeleteSessionParams,
+    IDeleteSessionResponse,
+    IGetAllProjectsResponse,
+    IGetAllSessionsParams,
+    IGetAllSessionsResponse,
+    IGetSessionResponse,
+    IPagination
+} from "../types/session";
+import ObjectId = module
+import * as module from "node:module";
 
 class SessionService {
     static async getAllSessions({title, source, projectDir, page = 1, limit = 20}: IGetAllSessionsParams): Promise<IGetAllSessionsResponse> {
@@ -66,44 +78,7 @@ class SessionService {
         return {projects};
     }
 
-    static async deleteSession(sessionId: string): Promise<IDeleteSessionResponse> {
-        console.log('Service: SessionService.deleteSession called'.cyan.italic, sessionId);
-
-        if (!sessionId) {
-            return {error: generateInvalidCode('sessionId')};
-        }
-
-        const session: ISession | null = await SessionModel.findOne({sessionId});
-        if (!session) {
-            return {error: generateNotFoundCode('session')};
-        }
-
-        const mongoSession = await mongoose.startSession();
-        try {
-            mongoSession.startTransaction();
-
-            const {deletedCount: deletedMessagesCount} = await MessageModel.deleteMany(
-                {sessionInternalId: session._id},
-                {session: mongoSession},
-            );
-            const {deletedCount: deletedSessionCount} = await SessionModel.deleteOne(
-                {sessionId},
-                {session: mongoSession},
-            );
-
-            await mongoSession.commitTransaction();
-            console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedMessagesCount});
-
-            return {deletedSessions: deletedSessionCount, deletedMessages: deletedMessagesCount};
-        } catch (error: unknown) {
-            await mongoSession.abortTransaction();
-            throw error;
-        } finally {
-            await mongoSession.endSession();
-        }
-    }
-
-    static async deleteProject(projectDir: string): Promise<IDeleteProjectResponse> {
+    static async deleteProject({projectDir}: IDeleteProjectParams): Promise<IDeleteProjectResponse> {
         console.log('Service: SessionService.deleteProject called'.cyan.italic, projectDir);
 
         if (!projectDir) {
@@ -112,11 +87,8 @@ class SessionService {
 
         // Gather sessions for this project to derive related IDs
         const sessions = await SessionModel.find({projectDir}, {_id: 1, sessionId: 1}).lean();
-
-        // Convert cwd-format projectDir to dash-separated Memory format
-        // e.g. "/Users/padmanabhadas/Chayan_Personal/NodeJs" → "-Users-padmanabhadas-Chayan-Personal-NodeJs"
-        const memoryProjectDir: string = projectDir.replace(/[^a-zA-Z0-9]/g, '-');
-        const memoryCount: number = await MemoryModel.countDocuments({projectDir: memoryProjectDir});
+        const memoryCount: number = await MemoryModel.countDocuments({projectDir});
+        console.debug(`Service: Sessions found for project ${projectDir}`.cyan, sessions.length);
 
         if (sessions.length === 0 && memoryCount === 0) {
             return {error: generateNotFoundCode('project')};
@@ -125,7 +97,7 @@ class SessionService {
         const sessionInternalIds = sessions.map((s) => s._id);
         const sessionIds: string[] = sessions.map((s) => s.sessionId);
 
-        const mongoSession = await mongoose.startSession();
+        const mongoSession: ClientSession = await mongoose.startSession();
         try {
             mongoSession.startTransaction();
 
@@ -138,7 +110,7 @@ class SessionService {
                 {session: mongoSession},
             );
             const {deletedCount: deletedMemoriesCount} = await MemoryModel.deleteMany(
-                {projectDir: memoryProjectDir},
+                {projectDir},
                 {session: mongoSession},
             );
             const {deletedCount: deletedSessionsCount} = await SessionModel.deleteMany(
@@ -155,6 +127,48 @@ class SessionService {
                 deletedTasks: deletedTasksCount,
                 deletedMemories: deletedMemoriesCount,
             };
+        } catch (error: unknown) {
+            console.error('inside catch of deleteProject:'.red.bold, error);
+            await mongoSession.abortTransaction();
+            throw error;
+        } finally {
+            await mongoSession.endSession();
+        }
+    }
+
+    static async deleteSession({sessionId}: IDeleteSessionParams): Promise<IDeleteSessionResponse> {
+        console.log('Service: SessionService.deleteSession called'.cyan.italic, sessionId);
+
+        if (!sessionId) {
+            return {error: generateInvalidCode('sessionId')};
+        }
+
+        const session: ISession | null = await SessionModel.findOne({sessionId});
+        if (!session) {
+            return {error: generateNotFoundCode('session')};
+        }
+
+        const mongoSession: ClientSession = await mongoose.startSession();
+        try {
+            mongoSession.startTransaction();
+
+            const {deletedCount: deletedTasksCount} = await TaskModel.deleteMany(
+                {sessionId},
+                {session: mongoSession},
+            );
+            const {deletedCount: deletedMessagesCount} = await MessageModel.deleteMany(
+                {sessionInternalId: session._id},
+                {session: mongoSession},
+            );
+            const {deletedCount: deletedSessionCount} = await SessionModel.deleteOne(
+                {sessionId},
+                {session: mongoSession},
+            );
+
+            await mongoSession.commitTransaction();
+            console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedTasksCount, deletedMessagesCount});
+
+            return {deletedSessions: deletedSessionCount, deletedTasks: deletedTasksCount, deletedMessages: deletedMessagesCount};
         } catch (error: unknown) {
             await mongoSession.abortTransaction();
             throw error;

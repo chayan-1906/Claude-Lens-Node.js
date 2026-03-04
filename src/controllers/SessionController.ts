@@ -3,7 +3,7 @@ import {Request, Response} from "express";
 import {ApiResponse} from "../utils/ApiResponse";
 import {ESessionSource} from "../models/Session";
 import SessionService from "../services/SessionService";
-import {IDeleteSessionParams, IGetSessionParams} from "../types/session";
+import {IDeleteProjectParams, IDeleteSessionParams, IGetSessionParams} from "../types/session";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 
 const VALID_SOURCES: string[] = Object.values(ESessionSource);
@@ -114,66 +114,15 @@ const getAllProjectsController = async (req: Request, res: Response) => {
     }
 }
 
-const deleteSessionController = async (req: Request, res: Response) => {
-    console.info('Controller: deleteSessionController started'.bgBlue.white.bold);
-
-    try {
-        const {sessionId}: Partial<IDeleteSessionParams> = req.params;
-
-        const {deletedSessions, deletedMessages, error} = await SessionService.deleteSession(sessionId || '');
-        if (error) {
-            let errorMsg: string = 'Failed to delete session!';
-            let statusCode: number = 500;
-
-            if (error === generateInvalidCode('sessionId')) {
-                statusCode = 400;
-                errorMsg = `Invalid sessionId: ${sessionId}!`;
-            } else if (error === generateNotFoundCode('session')) {
-                statusCode = 404;
-                errorMsg = `No session found with sessionId: ${sessionId}!`;
-            }
-
-            res.status(statusCode).send(new ApiResponse({
-                success: false,
-                errorCode: error,
-                errorMsg,
-            }));
-            return;
-        }
-
-        console.log('SUCCESS: Session deleted'.bgGreen.bold, {sessionId, deletedSessions, deletedMessages});
-        res.status(200).send(new ApiResponse({
-            success: true,
-            message: 'Session has been deleted!',
-            deletedSessions,
-            deletedMessages,
-        }));
-    } catch (error: any) {
-        console.error('Controller Error: deleteSessionController failed'.red.bold, error);
-        res.status(500).send(new ApiResponse({
-            success: false,
-            errorMsg: error.message || 'Something went wrong while deleting the session!',
-        }));
-    }
-}
-
 const deleteProjectController = async (req: Request, res: Response) => {
     console.info('Controller: deleteProjectController started'.bgBlue.white.bold);
 
     try {
-        const {projectDir} = req.query as Record<string, string | undefined>;
+        const {projectDir}: Partial<IDeleteProjectParams> = req.params;
 
-        if (!projectDir) {
-            res.status(400).send(new ApiResponse({
-                success: false,
-                errorCode: generateMissingCode('projectDir'),
-                errorMsg: 'projectDir query parameter is required!',
-            }));
-            return;
-        }
-
-        const {deletedSessions, deletedMessages, deletedTasks, deletedMemories, error} = await SessionService.deleteProject(projectDir);
+        const {deletedSessions, deletedMessages, deletedTasks, deletedMemories, error} = await SessionService.deleteProject({projectDir});
         if (error) {
+            console.error('Failed to delete project:'.red.bold, error);
             let errorMsg: string = 'Failed to delete project!';
             let statusCode: number = 500;
 
@@ -207,6 +156,49 @@ const deleteProjectController = async (req: Request, res: Response) => {
         res.status(500).send(new ApiResponse({
             success: false,
             errorMsg: error.message || 'Something went wrong while deleting the project!',
+        }));
+    }
+}
+
+const deleteSessionController = async (req: Request, res: Response) => {
+    console.info('Controller: deleteSessionController started'.bgBlue.white.bold);
+
+    try {
+        const {sessionId}: Partial<IDeleteSessionParams> = req.params;
+
+        const {deletedSessions, deletedMessages, error} = await SessionService.deleteSession({sessionId});
+        if (error) {
+            let errorMsg: string = 'Failed to delete session!';
+            let statusCode: number = 500;
+
+            if (error === generateInvalidCode('sessionId')) {
+                statusCode = 400;
+                errorMsg = `Invalid sessionId: ${sessionId}!`;
+            } else if (error === generateNotFoundCode('session')) {
+                statusCode = 404;
+                errorMsg = `No session found with sessionId: ${sessionId}!`;
+            }
+
+            res.status(statusCode).send(new ApiResponse({
+                success: false,
+                errorCode: error,
+                errorMsg,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: Session deleted'.bgGreen.bold, {sessionId, deletedSessions, deletedMessages});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Session has been deleted!',
+            deletedSessions,
+            deletedMessages,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: deleteSessionController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while deleting the session!',
         }));
     }
 }

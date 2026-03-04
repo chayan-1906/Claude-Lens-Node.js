@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import {EMessageRole} from "../models/Message";
+import {NON_ALPHANUMERIC_REGEX} from "./constants";
 import {IParsedFile, IParsedMessage} from "../types/sync";
 
 // --- Constants ---
@@ -51,7 +52,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             sessionId = parsedLine.sessionId as string;
         }
         if (!projectDir && parsedLine.cwd) {
-            projectDir = parsedLine.cwd as string;
+            projectDir = (parsedLine.cwd as string).replace(NON_ALPHANUMERIC_REGEX, '-');
         }
         if (parsedLine.gitBranch) {
             gitBranch = parsedLine.gitBranch as string;
