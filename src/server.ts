@@ -24,7 +24,7 @@ app.get('/', function (req, res) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');
 });
 
-const port: number = Number(PORT) || 4000;
+const port: number = Number(PORT) || 20261;
 
 const start = async () => {
     try {
