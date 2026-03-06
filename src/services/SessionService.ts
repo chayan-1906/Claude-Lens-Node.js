@@ -16,8 +16,6 @@ import {
     IGetSessionResponse,
     IPagination
 } from "../types/session";
-import ObjectId = module
-import * as module from "node:module";
 
 class SessionService {
     static async getAllSessions({title, source, projectDir, page = 1, limit = 20}: IGetAllSessionsParams): Promise<IGetAllSessionsResponse> {
@@ -94,7 +92,7 @@ class SessionService {
             return {error: generateNotFoundCode('project')};
         }
 
-        const sessionInternalIds = sessions.map((s) => s._id);
+        const sessionInternalIds: Types.ObjectId[] = sessions.map((s) => s._id);
         const sessionIds: string[] = sessions.map((s) => s.sessionId);
 
         const mongoSession: ClientSession = await mongoose.startSession();

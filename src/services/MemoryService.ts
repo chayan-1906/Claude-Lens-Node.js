@@ -17,7 +17,7 @@ class MemoryService {
 
         const skip: number = (page - 1) * limit;
 
-        console.debug('Service: filter:', filter);
+        console.debug('Service: filter:'.cyan, filter);
         const [memories, total]: [IMemory[], number] = await Promise.all([
             MemoryModel.find(filter)
                 .sort({updatedAt: -1})

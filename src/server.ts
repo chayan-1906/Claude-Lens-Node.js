@@ -3,6 +3,7 @@ import cors from "cors";
 import morgan from "morgan";
 import express, {Express} from 'express';
 import {PORT} from "./config/config";
+import syncRoutes from "./routes/SyncRoutes";
 import {connectDB} from "./config/connectDB";
 import {getLocalIP} from "./utils/getLocalIP";
 import taskRoutes from "./routes/TaskRoutes";
@@ -17,6 +18,7 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // routes
+app.use('/api/v1/sync', syncRoutes);
 app.use('/api/v1/sessions', sessionRoutes);
 app.use('/api/v1/tasks', taskRoutes);
 app.use('/api/v1/memories', memoryRoutes);
