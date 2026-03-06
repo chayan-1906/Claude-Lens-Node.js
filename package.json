@@ -10,8 +10,7 @@
     "build": "tsc",
     "bundle": "ncc build dist/server.js -o build",
     "package": "ts-node src/scripts/package-script.ts",
-    "start": "node dist/server.js",
-    "sync": "npx ts-node src/scripts/sync.ts"
+    "start": "node dist/server.js"
   },
   "keywords": [],
   "dependencies": {

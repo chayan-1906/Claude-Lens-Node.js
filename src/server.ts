@@ -7,6 +7,7 @@ import syncRoutes from "./routes/SyncRoutes";
 import {connectDB} from "./config/connectDB";
 import {getLocalIP} from "./utils/getLocalIP";
 import taskRoutes from "./routes/TaskRoutes";
+import setupRoutes from "./routes/SetupRoutes";
 import memoryRoutes from "./routes/MemoryRoutes";
 import sessionRoutes from "./routes/SessionRoutes";
 
@@ -18,6 +19,7 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // routes
+app.use('/api/v1/setup', setupRoutes);
 app.use('/api/v1/sync', syncRoutes);
 app.use('/api/v1/sessions', sessionRoutes);
 app.use('/api/v1/tasks', taskRoutes);
@@ -30,17 +32,25 @@ const port: number = Number(PORT) || 20261;
 
 const start = async () => {
     try {
-        await connectDB();
+        const connection = await connectDB();
+        if (!connection) {
+            console.log('Server starting in setup mode — visit /api/v1/setup/status'.yellow.bold);
+        }
 
         app.listen(port, '0.0.0.0', () => {
-            console.log(`Server started on ${PORT}`.blue.italic.bold);
-            console.log(`\t- Local:        http://localhost:${PORT}`.green.bold);
-            console.log(`\t- Network:      http://${getLocalIP()}:${PORT}`.green.bold);
+            console.log(`Server started on ${port}`.blue.italic.bold);
+            console.log(`\t- Local:        http://localhost:${port}`.green.bold);
+            console.log(`\t- Network:      http://${getLocalIP()}:${port}`.green.bold);
         });
     } catch (error: any) {
-        console.error('Service Error: Server setup failed'.red.bold, error);
-        console.error('Service Error: Database connection failed during startup'.red.bold);
-        process.exit(1);
+        console.error('Service Error: Database connection failed during startup'.red.bold, error);
+        console.log('Server starting without database — setup required'.yellow.bold);
+
+        app.listen(port, '0.0.0.0', () => {
+            console.log(`Server started on ${port} (setup mode)`.yellow.italic.bold);
+            console.log(`\t- Local:        http://localhost:${port}`.green.bold);
+            console.log(`\t- Network:      http://${getLocalIP()}:${port}`.green.bold);
+        });
     }
 }
 
