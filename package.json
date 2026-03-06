@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "nodemon --exec ts-node src/server.ts",
     "build": "tsc",
-    "start": "node src/server.ts",
+    "bundle": "ncc build dist/server.js -o build",
+    "package": "ts-node src/scripts/package-script.ts",
+    "start": "node dist/server.js",
     "sync": "npx ts-node src/scripts/sync.ts"
   },
   "keywords": [],
@@ -17,13 +19,14 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "mongoose": "^9.2.3",
+    "mongoose": "^9.2.4",
     "morgan": "^1.10.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/morgan": "^1.9.10",
+    "@vercel/ncc": "^0.38.4",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
