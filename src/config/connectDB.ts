@@ -6,8 +6,8 @@ import {getLocalConfig, ILocalConfig} from "../utils/localConfig";
 /** Cached MongoDB connection for reuse across requests */
 let cachedConnection: typeof mongoose | null = null;
 
-/** Whether signal handlers have been registered (avoid duplicate listeners) */
-let signalHandlersRegistered: boolean = false;
+/** Whether event listeners have been registered (avoid duplicate listeners) */
+let listenersRegistered: boolean = false;
 
 /**
  * Resolve the effective MONGO_URI:
@@ -39,6 +39,12 @@ async function connectDB(uri?: string): Promise<typeof mongoose | null> {
     }
 
     try {
+        // If an explicit URI is provided and we already have a connection, close it first
+        if (uri && cachedConnection && mongoose.connection.readyState === 1) {
+            console.log('Database: Closing existing connection to switch URI'.cyan);
+            await closeConnection();
+        }
+
         if (cachedConnection && mongoose.connection.readyState === 1) {
             console.log('Database: Using cached connection'.cyan, {cached: true});
             return cachedConnection;
@@ -57,21 +63,21 @@ async function connectDB(uri?: string): Promise<typeof mongoose | null> {
         cachedConnection = connection;
         console.log('SUCCESS: Database connection established'.bgGreen.bold, {host: mongoose.connection.host, pooling: true});
 
-        mongoose.connection.on('connected', () => {
-            console.log('Background: Mongoose connected to MongoDB'.blue);
-        });
+        if (!listenersRegistered) {
+            listenersRegistered = true;
 
-        mongoose.connection.on('error', (err) => {
-            console.error('Service Error: Mongoose connection failed'.red.bold, err);
-        });
+            mongoose.connection.on('connected', () => {
+                console.log('Background: Mongoose connected to MongoDB'.blue);
+            });
 
-        mongoose.connection.on('disconnected', () => {
-            console.warn('Config Warning: Mongoose disconnected'.yellow.italic);
-            cachedConnection = null;
-        });
+            mongoose.connection.on('error', (err) => {
+                console.error('Service Error: Mongoose connection failed'.red.bold, err);
+            });
 
-        if (!signalHandlersRegistered) {
-            signalHandlersRegistered = true;
+            mongoose.connection.on('disconnected', () => {
+                console.warn('Config Warning: Mongoose disconnected'.yellow.italic);
+                cachedConnection = null;
+            });
 
             process.on('SIGINT', async () => {
                 await closeConnection();
