@@ -9,6 +9,7 @@ import {getLocalIP} from "./utils/getLocalIP";
 import taskRoutes from "./routes/TaskRoutes";
 import setupRoutes from "./routes/SetupRoutes";
 import memoryRoutes from "./routes/MemoryRoutes";
+import projectRoutes from "./routes/ProjectRoutes";
 import sessionRoutes from "./routes/SessionRoutes";
 
 // rest object
@@ -21,6 +22,7 @@ app.use(morgan('dev'));
 // routes
 app.use('/api/v1/setup', setupRoutes);
 app.use('/api/v1/sync', syncRoutes);
+app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/sessions', sessionRoutes);
 app.use('/api/v1/tasks', taskRoutes);
 app.use('/api/v1/memories', memoryRoutes);
