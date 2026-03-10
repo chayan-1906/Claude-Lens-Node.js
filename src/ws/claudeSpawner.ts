@@ -16,6 +16,7 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         args.push('--project-dir', message.projectDir);
     }
 
+    console.debug('args:'.cyan, args);
     return args;
 }
 

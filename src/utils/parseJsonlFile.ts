@@ -14,6 +14,20 @@ const TITLE_MAX_LENGTH: number = 100;
 const STRIP_THINKING_BLOCKS: boolean = true;    // thinking blocks are large and not displayed in UI
 const STRIP_TOOL_RESULTS: boolean = false;      // tool results provide useful context for viewing
 
+// --- Helpers ---
+
+/**
+ * Compute total context window input tokens from a usage object.
+ * Context window = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+ * (cache affects pricing, not context window size — all cached tokens still occupy the window)
+ */
+function computeTotalInputTokens(usage: Record<string, unknown>): number {
+    const input: number = (usage.input_tokens as number) || 0;
+    const cacheCreation: number = (usage.cache_creation_input_tokens as number) || 0;
+    const cacheRead: number = (usage.cache_read_input_tokens as number) || 0;
+    return input + cacheCreation + cacheRead;
+}
+
 // --- Function ---
 
 /**
@@ -66,6 +80,23 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             customTitle = parsedLine.customTitle as string;
         }
 
+        // Extract real token usage from result events and attach to preceding assistant message.
+        // The result event's usage is more accurate than the assistant event's message.usage,
+        // so it overwrites whatever the assistant event set.
+        if (lineType === 'result') {
+            const usage: Record<string, unknown> | undefined = parsedLine.usage as Record<string, unknown> | undefined;
+            if (usage && messages.length > 0) {
+                const lastMessage: IParsedMessage = messages[messages.length - 1];
+                if (lastMessage.role === EMessageRole.ASSISTANT) {
+                    lastMessage.tokenUsage = {
+                        input: computeTotalInputTokens(usage),
+                        output: (usage.output_tokens as number) || 0,
+                    };
+                }
+            }
+            continue;
+        }
+
         // Only store user and assistant messages
         if (lineType !== 'user' && lineType !== 'assistant') continue;
 
@@ -112,7 +143,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             const usage: Record<string, unknown> | undefined = message.usage as Record<string, unknown> | undefined;
             if (usage) {
                 parsedMessage.tokenUsage = {
-                    input: (usage.input_tokens as number) || 0,
+                    input: computeTotalInputTokens(usage),
                     output: (usage.output_tokens as number) || 0,
                 };
             }
