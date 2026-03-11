@@ -3,13 +3,19 @@ import {ChildProcess} from "child_process";
 import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
 import {ClientMessage} from "../types/ws";
-import {spawnClaude} from "./claudeSpawner";
 import SyncService from "../services/SyncService";
+import {spawnClaude, sendMessage} from "./claudeSpawner";
 
 /**
  * Attach a WebSocketServer to the given HTTP server at path /ws.
  * Handles message routing, claude process lifecycle, and auto-sync.
  * No auth needed — both servers always run locally on the same Mac inside the .app bundle.
+ *
+ * Protocol:
+ *   new_session / resume_session  → spawns a persistent claude process, sends first message
+ *   send_message                  → writes follow-up message to the same process stdin (no re-spawn)
+ *   ping                          → pong
+ *   WS close                      → kills the process, triggers auto-sync
  */
 function attachWebSocket(httpServer: HttpServer): WebSocketServer {
     const webSocketServer: WebSocketServer = new WebSocketServer({server: httpServer, path: '/ws'});
@@ -39,7 +45,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 case 'new_session':
                 case 'resume_session': {
                     if (claudeProcess) {
-                        sendError(webSocket, 'A claude process is already running for this connection!');
+                        sendError(webSocket, 'Session already active on this connection. Use send_message to continue or close and reconnect!');
                         return;
                     }
 
@@ -68,6 +74,22 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         sendError(webSocket, `Failed to spawn claude: ${error.message}`);
                         claudeProcess = null;
                     });
+                    break;
+                }
+
+                case 'send_message': {
+                    if (!claudeProcess) {
+                        sendError(webSocket, 'No active session. Send new_session or resume_session first!');
+                        return;
+                    }
+
+                    if (!clientMessage.text || !clientMessage.text.trim()) {
+                        sendError(webSocket, 'Message text is required!');
+                        return;
+                    }
+
+                    console.log('WebSocket: Sending follow-up message to existing claude process'.cyan);
+                    sendMessage(claudeProcess, clientMessage.text);
                     break;
                 }
 

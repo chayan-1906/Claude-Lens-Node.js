@@ -12,11 +12,16 @@ export interface IResumeSessionMessage {
     text: string;
 }
 
+export interface ISendMessageMessage {
+    type: 'send_message';
+    text: string;
+}
+
 export interface IPingMessage {
     type: 'ping';
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | IPingMessage;
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage;
 
 
 /** ------------- Server → Client messages ------------- */
