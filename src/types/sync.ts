@@ -26,6 +26,7 @@ export interface IParsedFile {
     aiModel?: string;
     title: string;
     messages: IParsedMessage[];
+    contextTokensUsed?: number;  // total input tokens from the latest result event
 }
 
 export interface RawTask {

@@ -18,6 +18,8 @@ export interface ISession extends Document {
     gitBranch?: string;       // gitBranch from JSONL envelope
     slug?: string;            // human-readable session name e.g. "golden-toasting-penguin"
     source: ESessionSource;
+    contextTokensUsed?: number;   // total input tokens from the latest result event
+    contextWindowSize?: number;   // max context window for the model (e.g. 200000)
     createdAt: Date;
     updatedAt: Date;
 }
@@ -56,6 +58,12 @@ const SessionSchema = new Schema<ISession>({
         type: String,
         enum: Object.values(ESessionSource),
         default: ESessionSource.TERMINAL,
+    },
+    contextTokensUsed: {
+        type: Number,
+    },
+    contextWindowSize: {
+        type: Number,
     },
 }, {
     timestamps: true,

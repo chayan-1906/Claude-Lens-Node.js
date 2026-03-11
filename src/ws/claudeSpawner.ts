@@ -1,6 +1,6 @@
 import "colors";
 import {WebSocket} from "ws";
-import {spawn, ChildProcess} from "child_process";
+import {ChildProcess, spawn} from "child_process";
 import {INewSessionMessage, IResumeSessionMessage} from "../types/ws";
 
 /**
@@ -37,7 +37,7 @@ function toNdjson(text: string): string {
         session_id: '',
         message: {
             role: 'user',
-            content: [{ type: 'text', text }],
+            content: [{type: 'text', text}],
         },
         parent_tool_use_id: null,
     }) + '\n';
@@ -56,9 +56,10 @@ function sendMessage(claudeProcess: ChildProcess, text: string): void {
  * Spawn the claude CLI as a persistent process, send the first message via stdin,
  * and stream stdout lines to the WebSocket.
  * stdin is kept open — call sendMessage() for follow-up turns.
+ * onResult is called after each completed turn (result event) for per-turn auto-sync.
  * Returns the spawned ChildProcess so the caller can manage its lifecycle.
  */
-function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket): ChildProcess {
+function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: () => void): ChildProcess {
     const args: string[] = buildArgs(message);
     console.log(`WebSocket: Spawning claude ${args.join(' ')}`.cyan);
 
@@ -82,6 +83,9 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                 const event: Record<string, unknown> = JSON.parse(line);
                 if (webSocket.readyState === WebSocket.OPEN) {
                     webSocket.send(JSON.stringify(event));
+                }
+                if (event.type === 'result') {
+                    onResult();
                 }
             } catch {
                 // Skip non-JSON lines (e.g. claude startup text)

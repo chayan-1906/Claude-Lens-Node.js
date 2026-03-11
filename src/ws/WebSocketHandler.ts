@@ -4,7 +4,7 @@ import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
 import {ClientMessage} from "../types/ws";
 import SyncService from "../services/SyncService";
-import {spawnClaude, sendMessage} from "./claudeSpawner";
+import {sendMessage, spawnClaude} from "./claudeSpawner";
 
 /**
  * Attach a WebSocketServer to the given HTTP server at path /ws.
@@ -54,7 +54,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         return;
                     }
 
-                    claudeProcess = spawnClaude(clientMessage, webSocket);
+                    claudeProcess = spawnClaude(clientMessage, webSocket, autoSync);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
@@ -64,9 +64,6 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         }
 
                         claudeProcess = null;
-
-                        // Auto-sync conversation to MongoDB after process exits
-                        autoSync();
                     });
 
                     claudeProcess.on('error', (error: Error) => {
@@ -128,7 +125,7 @@ function sendError(webSocket: WebSocket, message: string): void {
 }
 
 /**
- * Trigger a full sync after a claude process exits.
+ * Trigger a full sync after each completed turn (result event).
  * Runs in the background — does not block the WebSocket connection.
  */
 async function autoSync(): Promise<void> {

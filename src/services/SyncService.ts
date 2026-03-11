@@ -162,6 +162,8 @@ class SyncService {
                 gitBranch: parsedFile.gitBranch,
                 slug: parsedFile.slug,
                 source: ESessionSource.WEBUI,
+                contextTokensUsed: parsedFile.contextTokensUsed,
+                contextWindowSize: 200000,
             },
             {upsert: true, returnDocument: 'after'},
         );

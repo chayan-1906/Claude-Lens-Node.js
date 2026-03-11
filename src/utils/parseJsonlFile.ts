@@ -46,6 +46,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
     let aiModel: string | undefined;
     let customTitle: string | undefined;
     let firstUserMessage: string = '';
+    let contextTokensUsed: number | undefined;
 
     for (let i: number = 0; i < lines.length; i++) {
         const line: string = lines[i].trim();
@@ -85,13 +86,22 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         // so it overwrites whatever the assistant event set.
         if (lineType === 'result') {
             const usage: Record<string, unknown> | undefined = parsedLine.usage as Record<string, unknown> | undefined;
-            if (usage && messages.length > 0) {
-                const lastMessage: IParsedMessage = messages[messages.length - 1];
-                if (lastMessage.role === EMessageRole.ASSISTANT) {
-                    lastMessage.tokenUsage = {
-                        input: computeTotalInputTokens(usage),
-                        output: (usage.output_tokens as number) || 0,
-                    };
+            if (usage) {
+                const totalInput: number = computeTotalInputTokens(usage);
+
+                // Track latest result event's input tokens as context window usage
+                contextTokensUsed = totalInput;
+
+                // Also overwrite the preceding assistant message's tokenUsage with the
+                // more accurate result-event figure
+                if (messages.length > 0) {
+                    const lastMessage: IParsedMessage = messages[messages.length - 1];
+                    if (lastMessage.role === EMessageRole.ASSISTANT) {
+                        lastMessage.tokenUsage = {
+                            input: totalInput,
+                            output: (usage.output_tokens as number) || 0,
+                        };
+                    }
                 }
             }
             continue;
@@ -162,6 +172,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         aiModel,
         title: customTitle || slug || firstUserMessage || 'Untitled session',
         messages,
+        contextTokensUsed,
     };
 }
 
