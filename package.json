@@ -10,7 +10,8 @@
     "build": "tsc",
     "bundle": "ncc build dist/server.js -o build",
     "package": "ts-node src/scripts/package-script.ts",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true"
   },
   "keywords": [],
   "dependencies": {
@@ -18,8 +19,9 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "mongoose": "^9.2.4",
+    "mongoose": "^9.3.0",
     "morgan": "^1.10.1",
+    "node-pty": "^1.1.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {

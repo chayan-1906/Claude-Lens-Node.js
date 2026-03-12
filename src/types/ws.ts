@@ -22,7 +22,18 @@ export interface IPingMessage {
     type: 'ping';
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage;
+export interface IRunCommandMessage {
+    type: 'run_command';
+    command: string;
+    projectDir?: string;
+}
+
+export interface ICommandInputMessage {
+    type: 'command_input';
+    data: string;
+}
+
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IRunCommandMessage | ICommandInputMessage;
 
 
 /** ------------- Server → Client messages ------------- */
@@ -50,6 +61,12 @@ export interface IProjectNotAvailableMessage {
     messages: Record<string, unknown>[];
 }
 
+export interface ICommandOutputMessage {
+    type: 'command_output';
+    data: string;
+}
 
-/** stream-json events are forwarded as-is (system, assistant, result) */
-export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | Record<string, unknown>;
+export interface ICommandDoneMessage {
+    type: 'command_done';
+    exitCode: number | null;
+}

@@ -1,11 +1,13 @@
 import "colors";
 import fs from "fs";
 import path from "path";
+import {IPty} from "node-pty";
 import {ChildProcess} from "child_process";
 import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
 import {IMessage} from "../models/Message";
 import {ISession} from "../models/Session";
+import {spawnCommand} from "./commandSpawner";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import {sendMessage, spawnClaude} from "./claudeSpawner";
@@ -63,8 +65,10 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
  * Protocol:
  *   new_session / resume_session  → spawns a persistent claude process, sends first message
  *   send_message                  → writes follow-up message to the same process stdin (no re-spawn)
+ *   run_command                   → spawns a separate PTY for a slash command, streams output back
+ *   command_input                 → forwards raw keystrokes to the running PTY (interactive TUI support)
  *   ping                          → pong
- *   WS close                      → kills the process, triggers auto-sync
+ *   WS close                      → kills the process and any active PTY, triggers auto-sync
  */
 function attachWebSocket(httpServer: HttpServer): WebSocketServer {
     const webSocketServer: WebSocketServer = new WebSocketServer({server: httpServer, path: '/ws'});
@@ -73,6 +77,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         console.log('WebSocket: Client connected'.green.bold);
 
         let claudeProcess: ChildProcess | null = null;
+        let commandPty: IPty | null = null;
 
         webSocket.on('message', async (raw: Buffer) => {
             let clientMessage: ClientMessage;
@@ -162,6 +167,36 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     break;
                 }
 
+                case 'run_command': {
+                    if (commandPty) {
+                        sendError(webSocket, 'A command is already running. Wait for it to finish or close and reconnect!');
+                        return;
+                    }
+
+                    if (!clientMessage.command || !clientMessage.command.trim()) {
+                        sendError(webSocket, 'Command is required!');
+                        return;
+                    }
+
+                    console.log(`WebSocket: Running command "${clientMessage.command}"`.cyan);
+                    commandPty = spawnCommand(clientMessage.command, clientMessage.projectDir, webSocket);
+
+                    commandPty.onExit(() => {
+                        commandPty = null;
+                    });
+                    break;
+                }
+
+                case 'command_input': {
+                    if (!commandPty) {
+                        sendError(webSocket, 'No active command PTY. Send run_command first!');
+                        return;
+                    }
+
+                    commandPty.write(clientMessage.data);
+                    break;
+                }
+
                 default: {
                     sendError(webSocket, `Unknown message type: ${(clientMessage as any).type}`);
                 }
@@ -174,6 +209,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 console.log('WebSocket: Killing claude process (SIGTERM)'.yellow);
                 claudeProcess.kill('SIGTERM');
                 claudeProcess = null;
+            }
+            if (commandPty) {
+                console.log('WebSocket: Killing command PTY'.yellow);
+                commandPty.kill();
+                commandPty = null;
             }
         });
 
