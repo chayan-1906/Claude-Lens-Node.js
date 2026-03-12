@@ -13,6 +13,7 @@ import memoryRoutes from "./routes/MemoryRoutes";
 import projectRoutes from "./routes/ProjectRoutes";
 import sessionRoutes from "./routes/SessionRoutes";
 import {attachWebSocket} from "./ws/WebSocketHandler";
+import filePickerRoutes from "./routes/FilePickerRoutes";
 
 // rest object
 const app: Express = express();
@@ -29,6 +30,7 @@ app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/sessions', sessionRoutes);
 app.use('/api/v1/tasks', taskRoutes);
 app.use('/api/v1/memories', memoryRoutes);
+app.use('/api/v1/file-picker', filePickerRoutes);
 app.get('/', function (req: Request, res: Response) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');
 });
