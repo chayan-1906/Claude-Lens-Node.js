@@ -41,6 +41,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
     const messages: IParsedMessage[] = [];
     let sessionId: string = '';
     let projectDir: string = '';
+    let rawProjectDir: string = '';
     let gitBranch: string | undefined;
     let slug: string | undefined;
     let aiModel: string | undefined;
@@ -67,7 +68,8 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             sessionId = parsedLine.sessionId as string;
         }
         if (!projectDir && parsedLine.cwd) {
-            projectDir = (parsedLine.cwd as string).replace(NON_ALPHANUMERIC_REGEX, '-');
+            rawProjectDir = parsedLine.cwd as string;
+            projectDir = rawProjectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
         }
         if (parsedLine.gitBranch) {
             gitBranch = parsedLine.gitBranch as string;
@@ -167,6 +169,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
     return {
         sessionId,
         projectDir,
+        rawProjectDir,
         gitBranch,
         slug,
         aiModel,

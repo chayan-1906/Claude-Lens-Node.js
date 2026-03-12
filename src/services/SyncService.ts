@@ -159,6 +159,7 @@ class SyncService {
                 title: parsedFile.title,
                 aiModel: parsedFile.aiModel,
                 projectDir: parsedFile.projectDir,
+                rawProjectDir: parsedFile.rawProjectDir,
                 gitBranch: parsedFile.gitBranch,
                 slug: parsedFile.slug,
                 source: ESessionSource.WEBUI,

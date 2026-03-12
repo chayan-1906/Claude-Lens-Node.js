@@ -1,10 +1,59 @@
 import "colors";
+import fs from "fs";
+import path from "path";
 import {ChildProcess} from "child_process";
 import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
-import {ClientMessage} from "../types/ws";
+import {IMessage} from "../models/Message";
+import {ISession} from "../models/Session";
 import SyncService from "../services/SyncService";
+import SessionService from "../services/SessionService";
 import {sendMessage, spawnClaude} from "./claudeSpawner";
+import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
+import {ClientMessage, INewSessionMessage, IResumeSessionMessage} from "../types/ws";
+
+/**
+ * Check if the local JSONL session file exists for the given projectDir + sessionId.
+ * Claude stores sessions at ~/.claude/projects/{projectDirHash}/{sessionId}.jsonl
+ * where projectDirHash replaces all non-alphanumeric chars with '-'.
+ */
+function isLocalSessionAvailable(projectDir: string, sessionId: string): boolean {
+    const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+    const projectDirHash: string = projectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
+    const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
+    return fs.existsSync(jsonlPath);
+}
+
+/**
+ * Reconstruct a Claude session JSONL file from MongoDB data and write it to
+ * ~/.claude/projects/{session.projectDir}/{session.sessionId}.jsonl.
+ * Creates the directory if it doesn't exist.
+ * Note: tool_use/tool_result blocks and thinking blocks may be absent
+ * if they were stripped during the original sync.
+ */
+function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void {
+    const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+    const sessionDir: string = path.join(claudeProjectsDir, session.projectDir);
+    const jsonlPath: string = path.join(sessionDir, `${session.sessionId}.jsonl`);
+
+    fs.mkdirSync(sessionDir, {recursive: true});
+
+    const lines: string[] = messages.map((message) => JSON.stringify({
+        type: message.role,
+        uuid: message.uuid,
+        sessionId: session.sessionId,
+        timestamp: (message.timestamp as Date).toISOString(),
+        cwd: session.rawProjectDir,
+        message: {
+            role: message.role,
+            content: message.content,
+            ...(message.aiModel ? {model: message.aiModel} : {}),
+        },
+    }));
+
+    fs.writeFileSync(jsonlPath, lines.join('\n') + '\n', 'utf-8');
+    console.log(`WebSocket: Reconstructed session JSONL at ${jsonlPath} (${lines.length} messages)`.cyan);
+}
 
 /**
  * Attach a WebSocketServer to the given HTTP server at path /ws.
@@ -25,7 +74,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
         let claudeProcess: ChildProcess | null = null;
 
-        webSocket.on('message', (raw: Buffer) => {
+        webSocket.on('message', async (raw: Buffer) => {
             let clientMessage: ClientMessage;
             try {
                 clientMessage = JSON.parse(raw.toString()) as ClientMessage;
@@ -54,7 +103,30 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         return;
                     }
 
-                    claudeProcess = spawnClaude(clientMessage, webSocket, autoSync);
+                    if (clientMessage.type === 'resume_session' && !clientMessage.newProjectDir) {
+                        const {session, messages, error} = await SessionService.getSessionBySessionId(clientMessage.sessionId);
+
+                        if (!error && session && !isLocalSessionAvailable(session.projectDir, clientMessage.sessionId)) {
+                            if (!messages || messages.length === 0) {
+                                sendError(webSocket, `Cannot resume: session ${clientMessage.sessionId} has no messages in MongoDB and local files are missing.`);
+                                break;
+                            }
+                            try {
+                                reconstructAndSaveJsonl(session, messages);
+                            } catch (reconstructionError: unknown) {
+                                sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
+                                break;
+                            }
+                            // JSONL reconstructed — fall through to spawn with --resume as normal
+                        }
+                        // MongoDB error or session not in DB — fall through and let claude handle it
+                    }
+
+                    const spawnMessage: INewSessionMessage | IResumeSessionMessage = (clientMessage.type === 'resume_session' && clientMessage.newProjectDir)
+                        ? ({type: 'new_session', text: clientMessage.text, projectDir: clientMessage.newProjectDir} as INewSessionMessage)
+                        : clientMessage;
+
+                    claudeProcess = spawnClaude(spawnMessage, webSocket, autoSync);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);

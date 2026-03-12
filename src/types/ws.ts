@@ -10,6 +10,7 @@ export interface IResumeSessionMessage {
     type: 'resume_session';
     sessionId: string;
     text: string;
+    newProjectDir?: string;
 }
 
 export interface ISendMessageMessage {
@@ -40,6 +41,15 @@ export interface IErrorMessage {
     message: string;
 }
 
+export interface IProjectNotAvailableMessage {
+    type: 'project_not_available';
+    sessionId: string;
+    projectDir: string;
+    warning: string;
+    session: Record<string, unknown>;
+    messages: Record<string, unknown>[];
+}
+
 
 /** stream-json events are forwarded as-is (system, assistant, result) */
-export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | Record<string, unknown>;
+export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | Record<string, unknown>;

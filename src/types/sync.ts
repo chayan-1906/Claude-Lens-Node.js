@@ -20,7 +20,8 @@ export interface IParsedMessage {
 
 export interface IParsedFile {
     sessionId: string;
-    projectDir: string;
+    projectDir: string;   // hashed version of cwd (e.g. -Users-padmanabhadas-my-project)
+    rawProjectDir: string; // original cwd as-is (e.g. /Users/padmanabhadas/my-project)
     gitBranch?: string;
     slug?: string;
     aiModel?: string;

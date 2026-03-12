@@ -14,7 +14,8 @@ export interface ISession extends Document {
     sessionId: string;        // JSONL filename UUID — unique key for upsert
     title: string;            // first user message, truncated
     aiModel?: string;         // primary model used (from first assistant message)
-    projectDir: string;       // cwd from JSONL envelope
+    projectDir: string;       // hashed cwd (e.g. -Users-padmanabhadas-my-project) — used to locate ~/.claude/projects/ subdir
+    rawProjectDir: string;    // original cwd as-is (e.g. /Users/padmanabhadas/my-project) — used for JSONL reconstruction
     gitBranch?: string;       // gitBranch from JSONL envelope
     slug?: string;            // human-readable session name e.g. "golden-toasting-penguin"
     source: ESessionSource;
@@ -45,6 +46,10 @@ const SessionSchema = new Schema<ISession>({
         type: String,
     },
     projectDir: {
+        type: String,
+        required: true,
+    },
+    rawProjectDir: {
         type: String,
         required: true,
     },
