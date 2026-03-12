@@ -19,8 +19,6 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
 
     if (message.type === 'resume_session') {
         args.push('--resume', message.sessionId);
-    } else if (message.projectDir) {
-        args.push('--project-dir', message.projectDir);
     }
 
     console.debug('args:'.cyan, args);
@@ -65,6 +63,7 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
 
     const claudeProcess: ChildProcess = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: message.type === 'new_session' && message.projectDir ? message.projectDir : undefined,
     });
 
     // Send the first user message as NDJSON — stdin stays open for follow-ups
