@@ -4,6 +4,8 @@ import path from "path";
 import {ChildProcess} from "child_process";
 import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
+import TaskModel from "../models/Task";
+import MemoryModel from "../models/Memory";
 import {IMessage} from "../models/Message";
 import {ISession} from "../models/Session";
 import SyncService from "../services/SyncService";
@@ -53,6 +55,74 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
 
     fs.writeFileSync(jsonlPath, lines.join('\n') + '\n', 'utf-8');
     console.log(`WebSocket: Reconstructed session JSONL at ${jsonlPath} (${lines.length} messages)`.cyan);
+}
+
+/**
+ * Reconstruct task JSON files from MongoDB and write them to
+ * ~/.claude/tasks/{sessionId}/{taskId}.json.
+ * Skips if the task directory already exists with files on disk.
+ * Returns the number of tasks restored.
+ */
+async function reconstructAndSaveTasks(sessionId: string): Promise<number> {
+    const tasksDir: string = path.join(process.env.HOME || '~', '.claude', 'tasks', sessionId);
+
+    // Skip if local task files already exist
+    if (fs.existsSync(tasksDir)) {
+        const existing: string[] = fs.readdirSync(tasksDir).filter((name: string) => name.endsWith('.json'));
+        if (existing.length > 0) {
+            return 0;
+        }
+    }
+
+    const tasks = await TaskModel.find({sessionId});
+    if (tasks.length === 0) {
+        return 0;
+    }
+
+    fs.mkdirSync(tasksDir, {recursive: true});
+
+    for (const task of tasks) {
+        const rawTask = {
+            id: task.taskId,
+            subject: task.subject,
+            description: task.description,
+            ...(task.activeForm ? {activeForm: task.activeForm} : {}),
+            status: task.status,
+            blocks: task.blocks ?? [],
+            blockedBy: task.blockedBy ?? [],
+        };
+        fs.writeFileSync(path.join(tasksDir, `${task.taskId}.json`), JSON.stringify(rawTask, null, 2), 'utf-8');
+    }
+
+    console.log(`WebSocket: Reconstructed ${tasks.length} task(s) at ${tasksDir}`.cyan);
+    return tasks.length;
+}
+
+/**
+ * Reconstruct MEMORY.md from MongoDB and write it to
+ * ~/.claude/projects/{projectDir}/memory/MEMORY.md.
+ * Skips if the file already exists on disk.
+ * Returns true if the file was restored.
+ */
+async function reconstructAndSaveMemory(projectDir: string): Promise<boolean> {
+    const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+    const memoryFilePath: string = path.join(claudeProjectsDir, projectDir, 'memory', 'MEMORY.md');
+
+    // Skip if MEMORY.md already exists on disk
+    if (fs.existsSync(memoryFilePath)) {
+        return false;
+    }
+
+    const memory = await MemoryModel.findOne({projectDir});
+    if (!memory) {
+        return false;
+    }
+
+    fs.mkdirSync(path.dirname(memoryFilePath), {recursive: true});
+    fs.writeFileSync(memoryFilePath, memory.content, 'utf-8');
+
+    console.log(`WebSocket: Reconstructed MEMORY.md at ${memoryFilePath}`.cyan);
+    return true;
 }
 
 /**
@@ -117,6 +187,19 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
                                 break;
                             }
+
+                            try {
+                                await reconstructAndSaveTasks(clientMessage.sessionId);
+                            } catch (taskError: unknown) {
+                                console.error(`WebSocket: Failed to reconstruct tasks — ${taskError}`.red);
+                            }
+
+                            try {
+                                await reconstructAndSaveMemory(session.projectDir);
+                            } catch (memoryError: unknown) {
+                                console.error(`WebSocket: Failed to reconstruct MEMORY.md — ${memoryError}`.red);
+                            }
+
                             // Set cwd so claude --resume hashes the correct project dir
                             clientMessage.projectDir = session.rawProjectDir;
                             // JSONL reconstructed — fall through to spawn with --resume as normal
