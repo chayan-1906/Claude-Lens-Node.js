@@ -259,7 +259,7 @@ class SyncService {
     }
 
     /**
-     * Sync MEMORY.md files from ~/.claude/projects/ to MongoDB
+     * Sync all .md files from ~/.claude/projects/{project}/memory/ to MongoDB
      * When filteredDirs is provided, only syncs memory from those directories
      */
     private static async syncMemories(filteredDirs?: string[]): Promise<ISyncMemoriesResponse> {
@@ -270,31 +270,39 @@ class SyncService {
 
         for (const dir of dirs) {
             const projectDirName: string = path.basename(dir);
-            const memoryFilePath: string = path.join(dir, 'memory', 'MEMORY.md');
-            if (!fs.existsSync(memoryFilePath)) {
+            const memoryDir: string = path.join(dir, 'memory');
+
+            if (!fs.existsSync(memoryDir) || !fs.statSync(memoryDir).isDirectory()) {
                 continue;
             }
 
-            try {
-                const content: string = fs.readFileSync(memoryFilePath, 'utf-8');
+            const mdFiles: string[] = fs.readdirSync(memoryDir)
+                .filter((name: string) => name.endsWith('.md'));
 
-                const existing = await MemoryModel.findOneAndUpdate(
-                    {filePath: memoryFilePath},
-                    {
-                        projectDir: projectDirName,
-                        filePath: memoryFilePath,
-                        content,
-                    },
-                    {upsert: true, returnDocument: 'before'},
-                );
+            for (const mdFile of mdFiles) {
+                const memoryFilePath: string = path.join(memoryDir, mdFile);
 
-                if (existing === null) {
-                    synced++;
-                } else {
-                    updated++;
+                try {
+                    const content: string = fs.readFileSync(memoryFilePath, 'utf-8');
+
+                    const existing = await MemoryModel.findOneAndUpdate(
+                        {filePath: memoryFilePath},
+                        {
+                            projectDir: projectDirName,
+                            filePath: memoryFilePath,
+                            content,
+                        },
+                        {upsert: true, returnDocument: 'before'},
+                    );
+
+                    if (existing === null) {
+                        synced++;
+                    } else {
+                        updated++;
+                    }
+                } catch (error: unknown) {
+                    console.error(`Error: ${projectDirName}/memory/${mdFile} — ${error}`.red);
                 }
-            } catch (error: unknown) {
-                console.error(`Error: ${projectDirName}/memory/MEMORY.md — ${error}`.red);
             }
         }
 

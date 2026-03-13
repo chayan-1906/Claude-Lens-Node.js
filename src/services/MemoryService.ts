@@ -3,8 +3,7 @@ import {IPagination} from "../types/session";
 import MemoryModel, {IMemory} from "../models/Memory";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteMemoryByProjectResponse, IGetAllMemoriesParams, IGetAllMemoriesResponse, IGetMemoryParams, IGetMemoryResponse} from "../types/memory";
-import session from "../models/Session";
+import {IDeleteMemoryByProjectResponse, IGetAllMemoriesParams, IGetAllMemoriesResponse, IGetMemoriesParams, IGetMemoriesResponse} from "../types/memory";
 
 class MemoryService {
     static async getAllMemories({projectDir, page = 1, limit = 20}: IGetAllMemoriesParams): Promise<IGetAllMemoriesResponse> {
@@ -38,26 +37,26 @@ class MemoryService {
         return {memories, pagination};
     }
 
-    static async getMemory({projectDir}: IGetMemoryParams): Promise<IGetMemoryResponse> {
-        console.log('Service: MemoryService.getMemory called'.cyan.italic, {projectDir});
+    static async getMemories({projectDir}: IGetMemoriesParams): Promise<IGetMemoriesResponse> {
+        console.log('Service: MemoryService.getMemories called'.cyan.italic, {projectDir});
 
         if (!projectDir) {
             return {error: generateMissingCode('projectDir')};
         }
 
         projectDir = projectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
-        const memory: IMemory | null = await MemoryModel.findOne({projectDir});
-        if (!memory) {
-            return {error: generateNotFoundCode('memory')};
+        const memories: IMemory[] = await MemoryModel.find({projectDir}).sort({updatedAt: -1});
+        if (memories.length === 0) {
+            return {error: generateNotFoundCode('memories')};
         }
 
-        console.log('Database: Memory fetched'.cyan);
+        console.log('Database: Memories fetched'.cyan, memories.length);
 
-        return {memory};
+        return {memories};
     }
 
-    static async deleteMemoryByProjectDir(projectDir: string): Promise<IDeleteMemoryByProjectResponse> {
-        console.log('Service: MemoryService.deleteMemoryByProjectDir called'.cyan.italic, projectDir);
+    static async deleteMemoriesByProjectDir(projectDir: string): Promise<IDeleteMemoryByProjectResponse> {
+        console.log('Service: MemoryService.deleteMemoriesByProjectDir called'.cyan.italic, projectDir);
 
         if (!projectDir) {
             return {error: generateMissingCode('projectDir')};
@@ -65,10 +64,10 @@ class MemoryService {
 
         const {deletedCount} = await MemoryModel.deleteMany({projectDir});
         if (deletedCount === 0) {
-            return {error: generateNotFoundCode('memory')};
+            return {error: generateNotFoundCode('memories')};
         }
 
-        console.log('Database: Memory deleted'.cyan, {projectDir, deletedMemories: deletedCount});
+        console.log('Database: Memories deleted'.cyan, {projectDir, deletedMemories: deletedCount});
 
         return {deletedMemories: deletedCount};
     }

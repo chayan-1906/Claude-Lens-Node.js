@@ -2,7 +2,7 @@ import {Document, model, Model, Schema} from "mongoose";
 
 /**
  * Memory document interface
- * One document per ~/.claude/projects/{project}/memory/MEMORY.md file
+ * One document per .md file in ~/.claude/projects/{project}/memory/
  */
 export interface IMemory extends Document {
     memoryId: string;   // derived from _id via toJSON

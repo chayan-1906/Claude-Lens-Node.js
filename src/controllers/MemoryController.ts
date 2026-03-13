@@ -1,7 +1,7 @@
 import "colors";
 import {Request, Response} from "express";
 import {ApiResponse} from "../utils/ApiResponse";
-import {IGetMemoryParams} from "../types/memory";
+import {IGetMemoriesParams} from "../types/memory";
 import MemoryService from "../services/MemoryService";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 
@@ -32,23 +32,23 @@ const getAllMemoriesController = async (req: Request, res: Response) => {
     }
 }
 
-const getMemoryController = async (req: Request, res: Response) => {
-    console.info('Controller: getMemoryController started'.bgBlue.white.bold);
+const getMemoriesController = async (req: Request, res: Response) => {
+    console.info('Controller: getMemoriesController started'.bgBlue.white.bold);
 
     try {
-        const {projectDir}: Partial<IGetMemoryParams> = req.params;
+        const {projectDir}: Partial<IGetMemoriesParams> = req.params;
 
-        const {memory, error} = await MemoryService.getMemory({projectDir});
-        if (error || !memory) {
-            let errorMsg: string = 'Failed to retrieve memory!';
+        const {memories, error} = await MemoryService.getMemories({projectDir});
+        if (error || !memories) {
+            let errorMsg: string = 'Failed to retrieve memories!';
             let statusCode: number = 500;
 
             if (error === generateMissingCode('projectDir')) {
                 statusCode = 400;
                 errorMsg = 'projectDir is required!';
-            } else if (error === generateNotFoundCode('memory')) {
+            } else if (error === generateNotFoundCode('memories')) {
                 statusCode = 404;
-                errorMsg = `No memory found for projectDir: ${projectDir}!`;
+                errorMsg = `No memories found for projectDir: ${projectDir}!`;
             }
 
             res.status(statusCode).send(new ApiResponse({
@@ -59,26 +59,26 @@ const getMemoryController = async (req: Request, res: Response) => {
             return;
         }
 
-        console.log('SUCCESS: Memory fetched'.bgGreen.bold, {projectDir});
+        console.log('SUCCESS: Memories fetched'.bgGreen.bold, {projectDir, count: memories.length});
         res.status(200).send(new ApiResponse({
             success: true,
-            message: 'Memory has been fetched!',
-            memory,
+            message: 'Memories have been fetched!',
+            memories,
         }));
     } catch (error: any) {
-        console.error('Controller Error: getMemoryController failed'.red.bold, error);
+        console.error('Controller Error: getMemoriesController failed'.red.bold, error);
         res.status(500).send(new ApiResponse({
             success: false,
-            errorMsg: error.message || 'Something went wrong while retrieving memory!',
+            errorMsg: error.message || 'Something went wrong while retrieving memories!',
         }));
     }
 }
 
-const deleteMemoryByProjectDirController = async (req: Request, res: Response) => {
-    console.info('Controller: deleteMemoryByProjectDirController started'.bgBlue.white.bold);
+const deleteMemoriesByProjectDirController = async (req: Request, res: Response) => {
+    console.info('Controller: deleteMemoriesByProjectDirController started'.bgBlue.white.bold);
 
     try {
-        const {projectDir}: Partial<IGetMemoryParams> = req.params;
+        const {projectDir}: Partial<IGetMemoriesParams> = req.params;
 
         if (!projectDir) {
             res.status(400).send(new ApiResponse({
@@ -89,17 +89,17 @@ const deleteMemoryByProjectDirController = async (req: Request, res: Response) =
             return;
         }
 
-        const {deletedMemories, error} = await MemoryService.deleteMemoryByProjectDir(projectDir);
+        const {deletedMemories, error} = await MemoryService.deleteMemoriesByProjectDir(projectDir);
         if (error) {
-            let errorMsg: string = 'Failed to delete memory!';
+            let errorMsg: string = 'Failed to delete memories!';
             let statusCode: number = 500;
 
             if (error === generateMissingCode('projectDir')) {
                 statusCode = 400;
                 errorMsg = 'projectDir is required!';
-            } else if (error === generateNotFoundCode('memory')) {
+            } else if (error === generateNotFoundCode('memories')) {
                 statusCode = 404;
-                errorMsg = `No memory found for projectDir: ${projectDir}!`;
+                errorMsg = `No memories found for projectDir: ${projectDir}!`;
             }
 
             res.status(statusCode).send(new ApiResponse({
@@ -110,19 +110,19 @@ const deleteMemoryByProjectDirController = async (req: Request, res: Response) =
             return;
         }
 
-        console.log('SUCCESS: Memory deleted'.bgGreen.bold, {projectDir, deletedMemories});
+        console.log('SUCCESS: Memories deleted'.bgGreen.bold, {projectDir, deletedMemories});
         res.status(200).send(new ApiResponse({
             success: true,
-            message: 'Memory has been deleted!',
+            message: 'Memories have been deleted!',
             deletedMemories,
         }));
     } catch (error: any) {
-        console.error('Controller Error: deleteMemoryByProjectDirController failed'.red.bold, error);
+        console.error('Controller Error: deleteMemoriesByProjectDirController failed'.red.bold, error);
         res.status(500).send(new ApiResponse({
             success: false,
-            errorMsg: error.message || 'Something went wrong while deleting memory!',
+            errorMsg: error.message || 'Something went wrong while deleting memories!',
         }));
     }
 }
 
-export {getAllMemoriesController, getMemoryController, deleteMemoryByProjectDirController};
+export {getAllMemoriesController, getMemoriesController, deleteMemoriesByProjectDirController};
