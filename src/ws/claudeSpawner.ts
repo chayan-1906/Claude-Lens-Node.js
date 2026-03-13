@@ -63,7 +63,7 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
 
     const claudeProcess: ChildProcess = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: message.type === 'new_session' && message.projectDir ? message.projectDir : undefined,
+        cwd: message.projectDir || undefined,
     });
 
     // Send the first user message as NDJSON — stdin stays open for follow-ups

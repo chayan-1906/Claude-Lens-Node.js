@@ -122,6 +122,8 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
                                 break;
                             }
+                            // Set cwd so claude --resume hashes the correct project dir
+                            clientMessage.projectDir = session.rawProjectDir;
                             // JSONL reconstructed — fall through to spawn with --resume as normal
                         }
                         // MongoDB error or session not in DB — fall through and let claude handle it

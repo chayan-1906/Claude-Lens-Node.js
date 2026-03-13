@@ -11,6 +11,7 @@ export interface IResumeSessionMessage {
     sessionId: string;
     text: string;
     newProjectDir?: string;
+    projectDir?: string;
 }
 
 export interface ISendMessageMessage {
