@@ -4,6 +4,7 @@ import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
+import {reclaimCollectionStorage} from "../utils/reclaimStorage";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse} from "../types/project";
 
@@ -59,6 +60,9 @@ class ProjectService {
 
             await mongoSession.commitTransaction();
             console.log('Database: Project deleted'.cyan, {projectDir, deletedSessionsCount, deletedMessagesCount, deletedTasksCount, deletedMemoriesCount});
+
+            // Reclaim fragmented storage — fire-and-forget (non-blocking)
+            reclaimCollectionStorage('messages').catch(() => {});
 
             return {
                 deletedSessions: deletedSessionsCount,
