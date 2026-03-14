@@ -23,7 +23,41 @@ function isLocalSessionAvailable(projectDir: string, sessionId: string): boolean
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
     const projectDirHash: string = projectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
     const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
-    return fs.existsSync(jsonlPath);
+
+    console.log(`WebSocket: [TRACE] isLocalSessionAvailable — checking: ${jsonlPath}`.cyan);
+
+    if (!fs.existsSync(jsonlPath)) {
+        console.log(`WebSocket: [TRACE] isLocalSessionAvailable — file NOT found → false`.cyan);
+        return false;
+    }
+
+    // Validate: if any user/assistant message has empty content, the JSONL is broken.
+    // Claude exits with code 1 on resume when it encounters content: [] in the session.
+    // Return false so the caller falls back to reconstructing from MongoDB.
+    try {
+        const lines: string[] = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean);
+        console.log(`WebSocket: [TRACE] isLocalSessionAvailable — file found, validating ${lines.length} lines`.cyan);
+        for (const line of lines) {
+            const entry = JSON.parse(line) as Record<string, unknown>;
+            if (entry.type === 'user' || entry.type === 'assistant') {
+                const content = (entry.message as Record<string, unknown>)?.content;
+                const contentSummary: string = !content ? 'null/undefined'
+                    : Array.isArray(content) ? `ContentBlock[${(content as unknown[]).length}]`
+                        : `string(${String(content).length})`;
+                console.log(`WebSocket: [TRACE] isLocalSessionAvailable — type=${entry.type} content=${contentSummary}`.cyan);
+                if (!content || (Array.isArray(content) && (content as unknown[]).length === 0)) {
+                    console.warn(`WebSocket: [TRACE] isLocalSessionAvailable — BROKEN (empty content for ${entry.type}) → false`.yellow);
+                    return false;
+                }
+            }
+        }
+    } catch (err) {
+        console.error(`WebSocket: [TRACE] isLocalSessionAvailable — parse error: ${err} → false`.red);
+        return false;
+    }
+
+    console.log(`WebSocket: [TRACE] isLocalSessionAvailable — VALID → true`.cyan);
+    return true;
 }
 
 /**
@@ -40,21 +74,35 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
 
     fs.mkdirSync(sessionDir, {recursive: true});
 
-    const lines: string[] = messages.map((message) => JSON.stringify({
-        type: message.role,
-        uuid: message.uuid,
-        sessionId: session.sessionId,
-        timestamp: (message.timestamp as Date).toISOString(),
-        cwd: session.rawProjectDir,
-        message: {
-            role: message.role,
-            content: message.content,
-            ...(message.aiModel ? {model: message.aiModel} : {}),
-        },
-    }));
+    const lines: string[] = messages
+        .filter((message) => {
+            const content = message.content;
+            if (Array.isArray(content) && content.length === 0) {
+                console.warn(`WebSocket: Skipping ${message.role} message (uuid: ${message.uuid}) — empty content array`.yellow);
+                return false;
+            }
+            return true;
+        })
+        .map((message) => JSON.stringify({
+            type: message.role,
+            uuid: message.uuid,
+            sessionId: session.sessionId,
+            timestamp: (message.timestamp as Date).toISOString(),
+            cwd: session.rawProjectDir,
+            message: {
+                role: message.role,
+                content: message.content,
+                ...(message.aiModel ? {model: message.aiModel} : {}),
+            },
+        }));
+
+    if (lines.length === 0) {
+        console.warn(`WebSocket: [TRACE] reconstructAndSaveJsonl — 0 lines after filter (all messages had empty content?), writing empty JSONL`.yellow);
+    }
 
     fs.writeFileSync(jsonlPath, lines.join('\n') + '\n', 'utf-8');
     console.log(`WebSocket: Reconstructed session JSONL at ${jsonlPath} (${lines.length} messages)`.cyan);
+    console.log(`WebSocket: [TRACE] reconstructAndSaveJsonl — written to: ${jsonlPath}, rawProjectDir: ${session.rawProjectDir}`.cyan);
 }
 
 /**
@@ -174,35 +222,55 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     }
 
                     if (clientMessage.type === 'resume_session' && !clientMessage.newProjectDir) {
+                        console.log(`WebSocket: [TRACE] resume_session — sessionId: ${clientMessage.sessionId}`.cyan);
                         const {session, messages, error} = await SessionService.getSessionBySessionId(clientMessage.sessionId);
+                        console.log(`WebSocket: [TRACE] DB fetch — session: ${session ? `found (projectDir: ${session.projectDir}, rawProjectDir: ${session.rawProjectDir})` : 'null'}, messages: ${messages?.length ?? 0}, error: ${error ?? 'none'}`.cyan);
 
-                        if (!error && session && !isLocalSessionAvailable(session.projectDir, clientMessage.sessionId)) {
-                            if (!messages || messages.length === 0) {
-                                sendError(webSocket, `Cannot resume: session ${clientMessage.sessionId} has no messages in MongoDB and local files are missing.`);
-                                break;
-                            }
-                            try {
-                                reconstructAndSaveJsonl(session, messages);
-                            } catch (reconstructionError: unknown) {
-                                sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
-                                break;
-                            }
+                        if (error || !session) {
+                            console.log(`WebSocket: [TRACE] DB error or session not found — falling through to let claude handle it`.cyan);
+                        } else {
+                            const localAvailable: boolean = isLocalSessionAvailable(session.projectDir, clientMessage.sessionId);
+                            if (!localAvailable) {
+                                console.log(`WebSocket: [TRACE] Local JSONL unavailable/broken — reconstruction path`.cyan);
+                                if (!messages || messages.length === 0) {
+                                    sendError(webSocket, `Cannot resume: session ${clientMessage.sessionId} has no messages in MongoDB and local files are missing.`);
+                                    break;
+                                }
+                                console.log(`WebSocket: [TRACE] Messages from MongoDB (${messages.length}):`);
+                                messages.forEach((m, i) => {
+                                    const contentSummary: string = Array.isArray(m.content)
+                                        ? `ContentBlock[${m.content.length}]`
+                                        : `string(${String(m.content).length})`;
+                                    console.log(`WebSocket: [TRACE]   [${i}] role=${m.role} uuid=${m.uuid} content=${contentSummary}`.cyan);
+                                });
+                                try {
+                                    reconstructAndSaveJsonl(session, messages);
+                                } catch (reconstructionError: unknown) {
+                                    sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
+                                    break;
+                                }
 
-                            try {
-                                await reconstructAndSaveTasks(clientMessage.sessionId);
-                            } catch (taskError: unknown) {
-                                console.error(`WebSocket: Failed to reconstruct tasks — ${taskError}`.red);
-                            }
+                                try {
+                                    await reconstructAndSaveTasks(clientMessage.sessionId);
+                                } catch (taskError: unknown) {
+                                    console.error(`WebSocket: Failed to reconstruct tasks — ${taskError}`.red);
+                                }
 
-                            try {
-                                await reconstructAndSaveMemory(session.projectDir);
-                            } catch (memoryError: unknown) {
-                                console.error(`WebSocket: Failed to reconstruct MEMORY.md — ${memoryError}`.red);
-                            }
+                                try {
+                                    await reconstructAndSaveMemory(session.projectDir);
+                                } catch (memoryError: unknown) {
+                                    console.error(`WebSocket: Failed to reconstruct MEMORY.md — ${memoryError}`.red);
+                                }
 
-                            // Set cwd so claude --resume hashes the correct project dir
-                            clientMessage.projectDir = session.rawProjectDir;
-                            // JSONL reconstructed — fall through to spawn with --resume as normal
+                                // Set cwd so claude --resume hashes the correct project dir
+                                clientMessage.projectDir = session.rawProjectDir;
+                                console.log(`WebSocket: [TRACE] Reconstruction done — cwd set to: ${clientMessage.projectDir}`.cyan);
+                            } else {
+                                // Set cwd even when local JSONL is valid — claude --resume hashes cwd
+                                // to locate the session file, so it must match the original project dir
+                                clientMessage.projectDir = session.rawProjectDir;
+                                console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${session.rawProjectDir}`.cyan);
+                            }
                         }
                         // MongoDB error or session not in DB — fall through and let claude handle it
                     }
@@ -211,6 +279,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         ? ({type: 'new_session', text: clientMessage.text, projectDir: clientMessage.newProjectDir} as INewSessionMessage)
                         : clientMessage;
 
+                    console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
                     claudeProcess = spawnClaude(spawnMessage, webSocket, autoSync);
 
                     claudeProcess.on('exit', (code: number | null) => {
@@ -219,6 +288,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         if (webSocket.readyState === WebSocket.OPEN) {
                             webSocket.send(JSON.stringify({type: 'process_exit', code}));
                         }
+
+                        // Sync on exit guarantees all JSONL writes are complete.
+                        // The per-turn result-event sync may fire before claude finishes
+                        // writing assistant messages to the JSONL file, so this is the
+                        // authoritative sync that captures the final state.
+                        autoSync();
 
                         claudeProcess = null;
                     });

@@ -84,10 +84,17 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     webSocket.send(JSON.stringify(event));
                 }
                 if (event.type === 'result') {
-                    onResult();
+                    // Delay sync by 1.5s — claude emits the result event on stdout
+                    // before it finishes writing the assistant message to the JSONL
+                    // file. Syncing immediately means the assistant turn is missed.
+                    console.log('WebSocket: result event received — scheduling sync in 1500ms'.cyan);
+                    setTimeout(onResult, 1500);
                 }
             } catch {
-                // Skip non-JSON lines (e.g. claude startup text)
+                // Non-JSON line from claude stdout (e.g. startup text or plain-text error)
+                if (line.trim()) {
+                    console.warn(`WebSocket: claude stdout (non-JSON) — ${line}`.yellow);
+                }
             }
         }
     });
