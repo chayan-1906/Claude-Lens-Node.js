@@ -183,6 +183,7 @@ class SyncService {
             .filter((parsedMessage: IParsedMessage) => !existingUuids.has(parsedMessage.uuid))
             .map((parsedMessage: IParsedMessage) => ({
                 uuid: parsedMessage.uuid,
+                parentUuid: parsedMessage.parentUuid,
                 sessionInternalId,
                 role: parsedMessage.role,
                 content: parsedMessage.content,

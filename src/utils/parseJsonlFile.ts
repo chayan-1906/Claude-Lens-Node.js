@@ -142,6 +142,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         // Build parsedLine message
         const parsedMessage: IParsedMessage = {
             uuid: parsedLine.uuid as string,
+            parentUuid: parsedLine.parentUuid as string | undefined,
             role: messageRole,
             content,
             timestamp: new Date(parsedLine.timestamp as string),

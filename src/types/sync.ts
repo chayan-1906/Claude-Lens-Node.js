@@ -8,6 +8,7 @@ export const ALL_SYNC_TARGETS: SyncTarget[] = ['sessions', 'tasks', 'memories'];
 
 export interface IParsedMessage {
     uuid: string;
+    parentUuid?: string;
     role: EMessageRole;
     content: string | Record<string, unknown>[];
     aiModel?: string;

@@ -40,6 +40,7 @@ export enum EMessageRole {
 export interface IMessage extends Document {
     messageId: string;                      // derived from _id via toJSON (not stored)
     uuid: string;                           // JSONL envelope uuid — deduplication key for re-sync
+    parentUuid?: string;                    // JSONL envelope parentUuid — tree structure for regenerate/edit branches
     sessionInternalId: Types.ObjectId;      // ref: Session
     role: EMessageRole;
     content: string | ContentBlock[];
@@ -64,6 +65,9 @@ const MessageSchema = new Schema<IMessage>({
         required: true,
         unique: true,
         index: true,
+    },
+    parentUuid: {
+        type: String,
     },
     sessionInternalId: {
         type: Schema.Types.ObjectId,
