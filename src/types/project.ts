@@ -1,10 +1,15 @@
 /** ------------- Constants and Type Aliases ------------- */
 
+export interface IProject {
+    rawProjectDir: string;
+    projectDir: string;
+}
+
 
 /** ------------- API response types ------------- */
 
 export interface IGetAllProjectsResponse {
-    projects: string[];
+    projects: IProject[];
 }
 
 export interface IDeleteProjectResponse {

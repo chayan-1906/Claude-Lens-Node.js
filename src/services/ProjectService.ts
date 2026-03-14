@@ -6,14 +6,40 @@ import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
 import {reclaimCollectionStorage} from "../utils/reclaimStorage";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse} from "../types/project";
+import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse, IProject} from "../types/project";
 
 class ProjectService {
+    /*static async getAllProjects(): Promise<IGetAllProjectsResponse> {
+        console.log('Service: ProjectService.getAllProjects called'.cyan.italic);
+
+        const projects: string[] = await SessionModel.distinct('rawProjectDir');
+        console.log('Database: Projects fetched'.cyan, projects);
+
+        return {projects};
+    }*/
+
     static async getAllProjects(): Promise<IGetAllProjectsResponse> {
         console.log('Service: ProjectService.getAllProjects called'.cyan.italic);
 
-        const projects: string[] = await SessionModel.distinct('projectDir');
-        console.log('Database: Projects fetched'.cyan, projects.length);
+        const projects: IProject[] = await SessionModel.aggregate([
+            {
+                $group: {
+                    _id: {
+                        rawProjectDir: "$rawProjectDir",
+                        projectDir: "$projectDir",
+                    },
+                },
+            },
+            {
+                $project: {
+                    _id: 0,
+                    rawProjectDir: "$_id.rawProjectDir",
+                    projectDir: "$_id.projectDir",
+                },
+            },
+        ]);
+
+        console.log('Database: Projects fetched'.cyan, projects);
 
         return {projects};
     }
@@ -62,7 +88,8 @@ class ProjectService {
             console.log('Database: Project deleted'.cyan, {projectDir, deletedSessionsCount, deletedMessagesCount, deletedTasksCount, deletedMemoriesCount});
 
             // Reclaim fragmented storage — fire-and-forget (non-blocking)
-            reclaimCollectionStorage('messages').catch(() => {});
+            reclaimCollectionStorage('messages').catch(() => {
+            });
 
             return {
                 deletedSessions: deletedSessionsCount,
