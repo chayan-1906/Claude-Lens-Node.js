@@ -6,9 +6,11 @@ import {INewSessionMessage, IResumeSessionMessage} from "../types/ws";
 
 /**
  * Build the argument list for spawning the claude CLI.
- * Flags: -p --verbose --output-format stream-json --input-format stream-json
+ * Flags: -p --verbose --output-format stream-json --input-format stream-json --include-partial-messages
  * --input-format stream-json keeps stdin open so follow-up messages can be
  * written as NDJSON lines without spawning a new process per message.
+ * --include-partial-messages emits content_block_delta events as tokens arrive,
+ * enabling token-by-token streaming to the frontend.
  */
 function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[] {
     const args: string[] = [
@@ -16,6 +18,7 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         '--verbose',
         '--output-format', 'stream-json',
         '--input-format', 'stream-json',
+        '--include-partial-messages',
     ];
 
     if (message.type === 'resume_session') {

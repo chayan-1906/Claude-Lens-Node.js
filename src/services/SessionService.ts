@@ -4,14 +4,7 @@ import TaskModel from "../models/Task";
 import MessageModel from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
 import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {
-    IDeleteSessionParams,
-    IDeleteSessionResponse,
-    IGetAllSessionsParams,
-    IGetAllSessionsResponse,
-    IGetSessionResponse,
-    IPagination
-} from "../types/session";
+import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionResponse, IPagination} from "../types/session";
 
 class SessionService {
     static async getAllSessions({title, source, projectDir, page = 1, limit = 20}: IGetAllSessionsParams): Promise<IGetAllSessionsResponse> {
