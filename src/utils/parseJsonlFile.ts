@@ -11,7 +11,7 @@ const TITLE_MAX_LENGTH: number = 100;
 // --- Sync filters ---
 // Toggle these to control what gets stored in MongoDB
 // Comment out a line to disable that filter (i.e. store everything)
-const STRIP_THINKING_BLOCKS: boolean = true;    // thinking blocks are large and not displayed in UI
+const STRIP_THINKING_BLOCKS: boolean = false;   // thinking blocks are large and not displayed in UI
 const STRIP_TOOL_RESULTS: boolean = false;      // tool results provide useful context for viewing
 
 // --- Helpers ---
