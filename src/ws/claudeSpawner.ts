@@ -1,6 +1,7 @@
 import "colors";
 import {WebSocket} from "ws";
 import {ChildProcess, spawn} from "child_process";
+import {IMessage} from "../models/Message";
 import {INewSessionMessage, IResumeSessionMessage} from "../types/ws";
 
 /**
@@ -23,6 +24,40 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
 
     console.debug('args:'.cyan, args);
     return args;
+}
+
+/**
+ * Format prior conversation messages as NDJSON lines for --input-format stream-json.
+ * Used for context reconstruction in edit_session: pipes the conversation history
+ * (both user and assistant turns) to a fresh claude process before the new user message.
+ * Thinking/redacted_thinking blocks are excluded — they're stripped during sync.
+ */
+function toContextNdjson(messages: IMessage[]): string {
+    return messages
+        .map((message: IMessage) => {
+            const rawContent = message.content;
+            const content = Array.isArray(rawContent)
+                ? rawContent.filter((block: Record<string, unknown>) =>
+                    block.type !== 'thinking' && block.type !== 'redacted_thinking',
+                )
+                : [{type: 'text', text: String(rawContent)}];
+
+            // Skip messages with empty content after filtering (thinking-only messages).
+            // Claude CLI crashes (exit code 1) when it receives content: [] via stdin.
+            if (Array.isArray(content) && content.length === 0) return '';
+
+            return JSON.stringify({
+                type: message.role,
+                session_id: '',
+                message: {
+                    role: message.role,
+                    content,
+                },
+                parent_tool_use_id: null,
+            }) + '\n';
+        })
+        .filter(Boolean)
+        .join('');
 }
 
 /**
@@ -55,9 +90,11 @@ function sendMessage(claudeProcess: ChildProcess, text: string): void {
  * and stream stdout lines to the WebSocket.
  * stdin is kept open — call sendMessage() for follow-up turns.
  * onResult is called after each completed turn (result event) for per-turn auto-sync.
+ * onEvent is an optional hook called for every parsed stdout event before WS forwarding.
+ * contextNdjson is optional prior-conversation context piped to stdin before the first user message.
  * Returns the spawned ChildProcess so the caller can manage its lifecycle.
  */
-function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: () => void): ChildProcess {
+function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: () => void, onEvent?: (event: Record<string, unknown>) => void, contextNdjson?: string, contextUserCount?: number): ChildProcess {
     const args: string[] = buildArgs(message);
     console.log(`WebSocket: Spawning claude ${args.join(' ')}`.cyan);
 
@@ -66,11 +103,22 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
         cwd: message.projectDir || undefined,
     });
 
+    // Pipe prior conversation context first (edit_session reconstruction), then the new user message
+    if (contextNdjson) {
+        claudeProcess.stdin!.write(contextNdjson);
+    }
+
     // Send the first user message as NDJSON — stdin stays open for follow-ups
     sendMessage(claudeProcess, message.text);
 
     // Line-buffered stdout → parse JSON lines → forward to WebSocket
     let buffer: string = '';
+    // Track how many context turns to suppress — the CLI generates a real response
+    // for each piped context user message. We skip these N intermediate turns and
+    // only forward events from the final turn (the actual new user message response).
+    const contextTurnsToSkip: number = contextUserCount ?? 0;
+    let contextResultsSeen: number = 0;
+
     claudeProcess.stdout!.on('data', (chunk: Buffer) => {
         buffer += chunk.toString();
         const lines: string[] = buffer.split('\n');
@@ -80,6 +128,47 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
             if (!line.trim()) continue;
             try {
                 const event: Record<string, unknown> = JSON.parse(line);
+
+                // When context was piped, the CLI echoes context messages on stdout as
+                // JSONL entries (not stream-json events). Forwarding them to the frontend
+                // causes prior conversation messages to flash as streaming content.
+                // Skip: type "user" (never in stream-json), type "assistant" without
+                // message.id (context replay — real API responses always have message.id),
+                // and JSONL-only metadata entries (queue-operation, last-prompt).
+                if (contextNdjson) {
+                    const msgObj = event.message as Record<string, unknown> | undefined;
+                    const isContextReplay: boolean = event.type === 'user'
+                        || event.type === 'last-prompt'
+                        || event.type === 'queue-operation'
+                        || (event.type === 'assistant' && !msgObj?.id);
+                    if (isContextReplay) {
+                        console.log(`WebSocket: Skipping context replay event (type: ${event.type})`.cyan);
+                        continue;
+                    }
+                }
+
+                // Suppress intermediate real responses generated for context user messages.
+                // The CLI treats each piped user message as a separate prompt and generates
+                // a full stream-json response (with message.id). We suppress these N turns
+                // (N = contextUserCount) and only forward the final turn's events.
+                // The system event is always forwarded — it contains the session_id.
+                if (contextTurnsToSkip > 0 && contextResultsSeen < contextTurnsToSkip) {
+                    if (event.type === 'system') {
+                        // System event must pass through (session_id capture + frontend needs it)
+                        if (onEvent) onEvent(event);
+                        if (webSocket.readyState === WebSocket.OPEN) {
+                            webSocket.send(JSON.stringify(event));
+                        }
+                        continue;
+                    }
+                    if (event.type === 'result') {
+                        contextResultsSeen++;
+                        console.log(`WebSocket: Suppressing context turn result (${contextResultsSeen}/${contextTurnsToSkip})`.cyan);
+                    }
+                    continue;
+                }
+
+                if (onEvent) onEvent(event);
                 if (webSocket.readyState === WebSocket.OPEN) {
                     webSocket.send(JSON.stringify(event));
                 }
@@ -110,4 +199,4 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     return claudeProcess;
 }
 
-export {spawnClaude, sendMessage};
+export {spawnClaude, sendMessage, toContextNdjson};

@@ -7,12 +7,12 @@ import {IncomingMessage, Server as HttpServer} from "http";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import {IMessage} from "../models/Message";
-import {ISession} from "../models/Session";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
-import {sendMessage, spawnClaude} from "./claudeSpawner";
+import SessionModel, {ISession} from "../models/Session";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
-import {ClientMessage, INewSessionMessage, IResumeSessionMessage} from "../types/ws";
+import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
+import {ClientMessage, IEditSessionMessage, INewSessionMessage, IResumeSessionMessage} from "../types/ws";
 
 /**
  * Check if the local JSONL session file exists for the given projectDir + sessionId.
@@ -174,6 +174,35 @@ async function reconstructAndSaveMemory(projectDir: string): Promise<boolean> {
 }
 
 /**
+ * Walk the parentUuid-linked message tree and return only the active branch.
+ * Matches the getActiveBranch logic in the frontend — always picks the latest child.
+ */
+function getActiveBranch(messages: IMessage[]): IMessage[] {
+    const hasTreeData: boolean = messages.some((m: IMessage) => m.parentUuid !== undefined && m.parentUuid !== null);
+    if (!hasTreeData) return messages;
+
+    const childrenMap: Map<string | null, IMessage[]> = new Map();
+    for (const msg of messages) {
+        const key: string | null = msg.parentUuid ?? null;
+        if (!childrenMap.has(key)) childrenMap.set(key, []);
+        childrenMap.get(key)!.push(msg);
+    }
+
+    const result: IMessage[] = [];
+    let currentUuid: string | null = null;
+    while (true) {
+        const children: IMessage[] | undefined = childrenMap.get(currentUuid);
+        if (!children?.length) break;
+        const next: IMessage = children.reduce((a: IMessage, b: IMessage) =>
+            new Date(a.timestamp as Date) > new Date(b.timestamp as Date) ? a : b,
+        );
+        result.push(next);
+        currentUuid = next.uuid;
+    }
+    return result;
+}
+
+/**
  * Attach a WebSocketServer to the given HTTP server at path /ws.
  * Handles message routing, claude process lifecycle, and auto-sync.
  * No auth needed — both servers always run locally on the same Mac inside the .app bundle.
@@ -300,6 +329,112 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     claudeProcess.on('error', (error: Error) => {
                         console.error(`WebSocket: claude process error — ${error.message}`.red);
+                        sendError(webSocket, `Failed to spawn claude: ${error.message}`);
+                        claudeProcess = null;
+                    });
+                    break;
+                }
+
+                case 'edit_session': {
+                    // Kill existing claude process if active (live chat edit scenario)
+                    if (claudeProcess) {
+                        console.log('WebSocket: edit_session — killing active claude process before forking'.yellow);
+                        claudeProcess.kill('SIGTERM');
+                        claudeProcess = null;
+                    }
+
+                    const editMsg: IEditSessionMessage = clientMessage as IEditSessionMessage;
+
+                    if (!editMsg.text || !editMsg.text.trim()) {
+                        sendError(webSocket, 'Message text is required!');
+                        return;
+                    }
+
+                    if (!editMsg.sessionId) {
+                        sendError(webSocket, 'sessionId is required for edit_session!');
+                        return;
+                    }
+
+                    // Fetch parent session + full message history from MongoDB
+                    const {session: parentSession, messages: rawMessages, error: sessionError} = await SessionService.getSessionBySessionId(editMsg.sessionId);
+                    if (sessionError || !parentSession) {
+                        sendError(webSocket, `Session not found: ${editMsg.sessionId}`);
+                        break;
+                    }
+
+                    const oldSessionId: string = editMsg.sessionId;
+                    const oldTitle: string = parentSession.title;
+                    let newSessionId: string | null = null;
+                    let parentSessionIdSet: boolean = false;
+
+                    // Capture new session_id from the system event
+                    const captureSessionId = (event: Record<string, unknown>): void => {
+                        if (event.type === 'system') {
+                            newSessionId = event.session_id as string;
+                            console.log(`WebSocket: edit_session — new session_id captured: ${newSessionId}`.cyan);
+                        }
+                    };
+
+                    // After each sync: set parentSessionId + inherit title on the new session
+                    const afterEditSync = async (): Promise<void> => {
+                        await autoSync();
+                        if (newSessionId && !parentSessionIdSet) {
+                            parentSessionIdSet = true;
+                            try {
+                                const updated = await SessionModel.findOneAndUpdate(
+                                    {sessionId: newSessionId},
+                                    {$set: {parentSessionId: oldSessionId, title: oldTitle}},
+                                );
+                                if (!updated) {
+                                    // Race condition: session not yet synced — retry after 2 seconds
+                                    setTimeout(async () => {
+                                        await SessionModel.findOneAndUpdate(
+                                            {sessionId: newSessionId!},
+                                            {$set: {parentSessionId: oldSessionId, title: oldTitle}},
+                                        );
+                                    }, 2000);
+                                }
+                                console.log(`WebSocket: edit_session — set parentSessionId=${oldSessionId} on ${newSessionId}`.cyan);
+                            } catch (err: unknown) {
+                                console.error(`WebSocket: edit_session — failed to set parentSessionId: ${err}`.red);
+                            }
+                        }
+                    };
+
+                    // Build context: apply getActiveBranch then slice at editAtUuid (or take all for regenerate)
+                    const activeMessages: IMessage[] = getActiveBranch(rawMessages || []);
+                    let contextMessages: IMessage[];
+                    if (editMsg.editAtUuid) {
+                        const cutIndex: number = activeMessages.findIndex((m: IMessage) => m.uuid === editMsg.editAtUuid);
+                        contextMessages = cutIndex >= 0 ? activeMessages.slice(0, cutIndex + 1) : activeMessages;
+                        console.log(`WebSocket: edit_session — edit mode, cutIndex: ${cutIndex}, contextMessages: ${contextMessages.length}`.cyan);
+                    } else {
+                        contextMessages = activeMessages;
+                        console.log(`WebSocket: edit_session — regenerate mode, contextMessages: ${contextMessages.length}`.cyan);
+                    }
+
+                    const contextNdjson: string | undefined = contextMessages.length > 0 ? toContextNdjson(contextMessages) : undefined;
+                    const contextUserCount: number = contextMessages.filter((m: IMessage) => m.role === 'user').length;
+                    const spawnMsg: INewSessionMessage = {
+                        type: 'new_session',
+                        text: editMsg.text,
+                        projectDir: editMsg.projectDir || parentSession.rawProjectDir,
+                    };
+
+                    console.log(`WebSocket: edit_session — spawning fresh session (cwd: ${spawnMsg.projectDir}, contextUserCount: ${contextUserCount})`.cyan);
+                    claudeProcess = spawnClaude(spawnMsg, webSocket, afterEditSync, captureSessionId, contextNdjson, contextUserCount);
+
+                    claudeProcess.on('exit', (code: number | null) => {
+                        console.log(`WebSocket: edit_session claude process exited with code ${code}`.cyan);
+                        if (webSocket.readyState === WebSocket.OPEN) {
+                            webSocket.send(JSON.stringify({type: 'process_exit', code}));
+                        }
+                        afterEditSync();
+                        claudeProcess = null;
+                    });
+
+                    claudeProcess.on('error', (error: Error) => {
+                        console.error(`WebSocket: edit_session claude process error — ${error.message}`.red);
                         sendError(webSocket, `Failed to spawn claude: ${error.message}`);
                         claudeProcess = null;
                     });

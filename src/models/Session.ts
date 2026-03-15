@@ -21,6 +21,7 @@ export interface ISession extends Document {
     source: ESessionSource;
     contextTokensUsed?: number;   // total input tokens from the latest result event
     contextWindowSize?: number;   // max context window for the model (e.g. 200000)
+    parentSessionId?: string;     // sessionId of the parent session this was forked/edited from
     createdAt: Date;
     updatedAt: Date;
 }
@@ -69,6 +70,10 @@ const SessionSchema = new Schema<ISession>({
     },
     contextWindowSize: {
         type: Number,
+    },
+    parentSessionId: {
+        type: String,
+        index: true,
     },
 }, {
     timestamps: true,

@@ -23,7 +23,15 @@ export interface IPingMessage {
     type: 'ping';
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage;
+export interface IEditSessionMessage {
+    type: 'edit_session';
+    sessionId: string;
+    editAtUuid?: string;  // present = reconstruct up to this UUID (edit); absent = reconstruct all (regenerate)
+    text: string;
+    projectDir?: string;
+}
+
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage;
 
 
 /** ------------- Server → Client messages ------------- */

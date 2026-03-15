@@ -25,7 +25,7 @@ class SessionService {
         const skip: number = (page - 1) * limit;
 
         const [sessions, total]: [ISession[], number] = await Promise.all([
-            SessionModel.find(filter, {sessionId: 1, title: 1, aiModel: 1, projectDir: 1, source: 1, createdAt: 1, updatedAt: 1})
+            SessionModel.find(filter, {sessionId: 1, title: 1, aiModel: 1, projectDir: 1, source: 1, parentSessionId: 1, createdAt: 1, updatedAt: 1})
                 .sort({updatedAt: -1})
                 .skip(skip)
                 .limit(limit),
