@@ -457,6 +457,16 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     break;
                 }
 
+                case 'stop_execution': {
+                    if (!claudeProcess) {
+                        sendError(webSocket, 'No active session to stop!');
+                        break;
+                    }
+                    console.log('WebSocket: Received stop_execution — sending SIGINT to claude process'.yellow);
+                    claudeProcess.kill('SIGINT');
+                    break;
+                }
+
                 default: {
                     sendError(webSocket, `Unknown message type: ${(clientMessage as any).type}`);
                 }

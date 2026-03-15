@@ -31,7 +31,12 @@ export interface IEditSessionMessage {
     projectDir?: string;
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage;
+/** Client → Server: interrupt/stop Claude's current execution (equivalent to Esc in terminal) */
+export interface IStopExecutionMessage {
+    type: 'stop_execution';
+}
+
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage | IStopExecutionMessage;
 
 
 /** ------------- Server → Client messages ------------- */
