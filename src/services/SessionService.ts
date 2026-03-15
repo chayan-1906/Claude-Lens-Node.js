@@ -1,10 +1,15 @@
 import "colors";
-import mongoose, {ClientSession} from "mongoose";
+import fs from "fs";
+import path from "path";
+import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MessageModel from "../models/Message";
+import {ContentBlock} from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
-import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionResponse, IPagination} from "../types/session";
+import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse} from "../types/session";
+
+const CLAUDE_PROJECTS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'projects');
 
 class SessionService {
     static async getAllSessions({title, source, projectDir, page = 1, limit = 20}: IGetAllSessionsParams): Promise<IGetAllSessionsResponse> {
@@ -95,6 +100,119 @@ class SessionService {
         } finally {
             await mongoSession.endSession();
         }
+    }
+
+    static async stubMessages({sessionId, messageIds}: IStubMessagesParams): Promise<IStubMessagesResponse> {
+        console.log('Service: SessionService.stubMessages called'.cyan.italic, {sessionId, messageIds});
+
+        if (!sessionId) {
+            return {error: generateInvalidCode('sessionId')};
+        }
+        if (!messageIds || messageIds.length === 0) {
+            return {error: generateMissingCode('messageIds')};
+        }
+
+        const session: ISession | null = await SessionModel.findOne({sessionId});
+        if (!session) {
+            return {error: generateNotFoundCode('session')};
+        }
+
+        let stubbedCount: number = 0;
+        const stubbedUuids: Map<string, Array<{tool_use_id: string; tokenCount: number}>> = new Map();
+
+        for (const messageId of messageIds) {
+            if (!Types.ObjectId.isValid(messageId)) continue;
+
+            const message = await MessageModel.findById(messageId);
+            if (!message || !Array.isArray(message.content)) continue;
+
+            // Ensure message belongs to this session
+            if (message.sessionInternalId.toString() !== (session._id as Types.ObjectId).toString()) continue;
+
+            let modified: boolean = false;
+            const blockStubs: Array<{tool_use_id: string; tokenCount: number}> = [];
+
+            message.content = (message.content as ContentBlock[]).map((block: ContentBlock) => {
+                if (block.type !== 'tool_result' || (block as any)._stubbed) return block;
+                const tokenCount: number = Math.round((block.content as string).length / 4);
+                modified = true;
+                blockStubs.push({tool_use_id: block.tool_use_id, tokenCount});
+                return {
+                    type: 'tool_result' as const,
+                    tool_use_id: block.tool_use_id,
+                    content: `[content removed — was ~${tokenCount} tokens]`,
+                    is_error: block.is_error,
+                    _stubbed: true,
+                    _originalTokenCount: tokenCount,
+                };
+            });
+
+            if (modified) {
+                message.markModified('content');
+                await message.save();
+                stubbedUuids.set(message.uuid, blockStubs);
+                stubbedCount++;
+            }
+        }
+
+        let diskUpdated: boolean = false;
+        if (stubbedCount > 0) {
+            diskUpdated = SessionService.rewriteJsonl(session.projectDir, session.sessionId, stubbedUuids);
+        }
+
+        console.log('Database: Messages stubbed'.cyan, {stubbedCount, diskUpdated});
+        return {stubbedCount, diskUpdated};
+    }
+
+    private static rewriteJsonl(projectDir: string, sessionId: string, stubbedUuids: Map<string, Array<{tool_use_id: string; tokenCount: number}>>): boolean {
+        const jsonlPath: string = path.join(CLAUDE_PROJECTS_DIR, projectDir, `${sessionId}.jsonl`);
+
+        if (!fs.existsSync(jsonlPath)) {
+            console.warn(`Stub: JSONL file not found at ${jsonlPath}`.yellow);
+            return false;
+        }
+
+        const lines: string[] = fs.readFileSync(jsonlPath, 'utf-8').split('\n');
+        const updated: string[] = lines.map((line: string) => {
+            if (!line.trim()) return line;
+
+            let event: Record<string, unknown>;
+            try {
+                event = JSON.parse(line);
+            } catch {
+                return line;
+            }
+
+            const uuid: string = event.uuid as string;
+            if (!uuid || !stubbedUuids.has(uuid)) return line;
+
+            const message: Record<string, unknown> = event.message as Record<string, unknown>;
+            if (!message || !Array.isArray(message.content)) return line;
+
+            const stubMap: Map<string, number> = new Map(
+                stubbedUuids.get(uuid)!.map(({tool_use_id, tokenCount}) => [tool_use_id, tokenCount]),
+            );
+
+            message.content = (message.content as Record<string, unknown>[]).map((block: Record<string, unknown>) => {
+                if (block.type !== 'tool_result') return block;
+                const toolUseId: string = block.tool_use_id as string;
+                if (!stubMap.has(toolUseId)) return block;
+                const tokenCount: number = stubMap.get(toolUseId)!;
+                // Write native Claude Code format — strip _stubbed/_originalTokenCount (MongoDB-only metadata)
+                return {
+                    type: 'tool_result',
+                    tool_use_id: toolUseId,
+                    content: `[content removed — was ~${tokenCount} tokens]`,
+                    is_error: block.is_error,
+                };
+            });
+
+            return JSON.stringify(event);
+        });
+
+        fs.writeFileSync(jsonlPath, updated.join('\n'));
+        console.log(`Stub: JSONL rewritten at ${jsonlPath}`.cyan);
+        return true;
     }
 }
 

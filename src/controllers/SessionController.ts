@@ -3,8 +3,8 @@ import {Request, Response} from "express";
 import {ApiResponse} from "../utils/ApiResponse";
 import {ESessionSource} from "../models/Session";
 import SessionService from "../services/SessionService";
-import {IDeleteSessionParams, IGetSessionParams} from "../types/session";
-import {generateInvalidCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+import {IDeleteSessionParams, IGetSessionParams, IStubMessagesParams} from "../types/session";
+import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 
 const VALID_SOURCES: string[] = Object.values(ESessionSource);
 
@@ -136,4 +136,51 @@ const deleteSessionController = async (req: Request, res: Response) => {
     }
 }
 
-export {getAllSessionsController, getSessionController, deleteSessionController};
+const stubMessagesController = async (req: Request, res: Response) => {
+    console.info('Controller: stubMessagesController started'.bgBlue.white.bold);
+
+    try {
+        const {sessionId}: Partial<IStubMessagesParams> = req.params;
+        const {messageIds}: Partial<IStubMessagesParams> = req.body;
+
+        const {stubbedCount, diskUpdated, error} = await SessionService.stubMessages({sessionId, messageIds: messageIds ?? []});
+        if (error) {
+            let errorMsg: string = 'Failed to stub messages!';
+            let statusCode: number = 500;
+
+            if (error === generateInvalidCode('sessionId')) {
+                statusCode = 400;
+                errorMsg = `Invalid sessionId: ${sessionId}!`;
+            } else if (error === generateMissingCode('messageIds')) {
+                statusCode = 400;
+                errorMsg = 'messageIds array is required!';
+            } else if (error === generateNotFoundCode('session')) {
+                statusCode = 404;
+                errorMsg = `No session found with sessionId: ${sessionId}!`;
+            }
+
+            res.status(statusCode).send(new ApiResponse({
+                success: false,
+                errorCode: error,
+                errorMsg,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: Messages stubbed'.bgGreen.bold, {sessionId, stubbedCount, diskUpdated});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: `${stubbedCount} message(s) stubbed successfully!`,
+            stubbedCount,
+            diskUpdated,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: stubMessagesController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while stubbing messages!',
+        }));
+    }
+}
+
+export {getAllSessionsController, getSessionController, deleteSessionController, stubMessagesController};

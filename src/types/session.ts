@@ -50,3 +50,14 @@ export interface IGetSessionParams {
 export interface IDeleteSessionParams {
     sessionId?: string;
 }
+
+export interface IStubMessagesParams {
+    sessionId?: string;
+    messageIds: string[];
+}
+
+export interface IStubMessagesResponse {
+    stubbedCount?: number;
+    diskUpdated?: boolean;
+    error?: string;
+}
