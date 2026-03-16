@@ -26,12 +26,14 @@ class SyncService {
 
         const activeTargets: SyncTarget[] = (targets && targets.length > 0) ? targets : ALL_SYNC_TARGETS;
         const result: ISyncResponse = {};
+        console.debug('DEBUG: Active sync targets'.cyan, {activeTargets});
 
         // Resolve directories once — used by sessions, and to derive filters for tasks and memories
         const isFiltered: boolean = projectDirs !== undefined && projectDirs.length > 0;
         const directories: string[] = isFiltered
             ? SyncService.resolveProjectDirs(projectDirs!)
             : SyncService.getAllProjectDirs();
+        console.debug('DEBUG: Resolved directories'.cyan, {isFiltered, count: directories.length});
 
         // Pre-compute JSONL file list if needed by sessions or task filtering
         const needsJsonlFiles: boolean = activeTargets.includes('sessions') || (isFiltered && activeTargets.includes('tasks'));
@@ -145,6 +147,7 @@ class SyncService {
             console.warn(`Sync: Skipping invalid path: ${p}`.yellow);
         }
 
+        console.debug('DEBUG: Resolved project dirs'.cyan, {requested: paths.length, resolved: validPaths.length});
         return validPaths;
     }
 
@@ -179,6 +182,8 @@ class SyncService {
             existingDocs.map((document) => document.uuid as string)
         );
 
+        console.debug('DEBUG: Deduplication check'.cyan, {sessionId: parsedFile.sessionId, totalMessages: parsedFile.messages.length, existingUuids: existingUuids.size});
+
         const newMessages = parsedFile.messages
             .filter((parsedMessage: IParsedMessage) => !existingUuids.has(parsedMessage.uuid))
             .map((parsedMessage: IParsedMessage) => ({
@@ -205,11 +210,13 @@ class SyncService {
      */
     private static async syncTasks(allowedSessionIds?: Set<string>): Promise<ISyncTasksResponse> {
         if (!fs.existsSync(CLAUDE_TASKS_DIR)) {
+            console.debug('DEBUG: Tasks directory not found, skipping'.cyan, {path: CLAUDE_TASKS_DIR});
             return {synced: 0, updated: 0};
         }
 
         const sessionDirectories: fs.Dirent[] = fs.readdirSync(CLAUDE_TASKS_DIR, {withFileTypes: true})
             .filter((entry: fs.Dirent) => entry.isDirectory());
+        console.debug('DEBUG: Task session directories found'.cyan, {count: sessionDirectories.length, filtered: !!allowedSessionIds});
 
         let synced: number = 0;
         let updated: number = 0;
@@ -265,6 +272,7 @@ class SyncService {
      */
     private static async syncMemories(filteredDirs?: string[]): Promise<ISyncMemoriesResponse> {
         const dirs: string[] = filteredDirs ?? SyncService.getAllProjectDirs();
+        console.debug('DEBUG: Syncing memories'.cyan, {directories: dirs.length, filtered: !!filteredDirs});
 
         let synced: number = 0;
         let updated: number = 0;

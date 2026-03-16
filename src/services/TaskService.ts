@@ -37,14 +37,17 @@ class TaskService {
         console.log('Service: TaskService.getTask called'.cyan.italic, {sessionId, taskId});
 
         if (!sessionId) {
+            console.debug('DEBUG: Missing sessionId, returning error'.cyan);
             return {error: generateInvalidCode('sessionId')};
         }
         if (!taskId) {
+            console.debug('DEBUG: Missing taskId, returning error'.cyan);
             return {error: generateInvalidCode('taskId')};
         }
 
         const task: ITask | null = await TaskModel.findOne({sessionId, taskId});
         if (!task) {
+            console.debug('DEBUG: Task not found'.cyan, {sessionId, taskId});
             return {error: generateNotFoundCode('task')};
         }
 
@@ -54,14 +57,16 @@ class TaskService {
     }
 
     static async deleteTasksBySessionId({sessionId}: IDeleteTasksBySessionParams): Promise<IDeleteTasksBySessionResponse> {
-        console.log('Service: TaskService.deleteTasksBySessionId called'.cyan.italic, sessionId);
+        console.log('Service: TaskService.deleteTasksBySessionId called'.cyan.italic, {sessionId});
 
         if (!sessionId) {
+            console.debug('DEBUG: Missing sessionId, returning error'.cyan);
             return {error: generateInvalidCode('sessionId')};
         }
 
         const {deletedCount} = await TaskModel.deleteMany({sessionId});
         if (deletedCount === 0) {
+            console.debug('DEBUG: No tasks found to delete'.cyan, {sessionId});
             return {error: generateNotFoundCode('tasks')};
         }
 

@@ -9,15 +9,6 @@ import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorC
 import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse, IProject} from "../types/project";
 
 class ProjectService {
-    /*static async getAllProjects(): Promise<IGetAllProjectsResponse> {
-        console.log('Service: ProjectService.getAllProjects called'.cyan.italic);
-
-        const projects: string[] = await SessionModel.distinct('rawProjectDir');
-        console.log('Database: Projects fetched'.cyan, projects);
-
-        return {projects};
-    }*/
-
     static async getAllProjects(): Promise<IGetAllProjectsResponse> {
         console.log('Service: ProjectService.getAllProjects called'.cyan.italic);
 
@@ -48,6 +39,7 @@ class ProjectService {
         console.log('Service: ProjectService.deleteProject called'.cyan.italic, projectDir);
 
         if (!projectDir) {
+            console.debug('DEBUG: Missing projectDir, returning error'.cyan);
             return {error: generateMissingCode('projectDir')};
         }
 
@@ -57,12 +49,14 @@ class ProjectService {
         console.debug(`Service: Sessions found for project ${projectDir}`.cyan, sessions.length);
 
         if (sessions.length === 0 && memoryCount === 0) {
+            console.debug('DEBUG: No sessions or memories found for project'.cyan, {projectDir});
             return {error: generateNotFoundCode('project')};
         }
 
         const sessionInternalIds: Types.ObjectId[] = sessions.map((s) => s._id);
         const sessionIds: string[] = sessions.map((s) => s.sessionId);
 
+        console.debug('DEBUG: Starting delete transaction'.cyan, {sessionCount: sessions.length, memoryCount, sessionIds});
         const mongoSession: ClientSession = await mongoose.startSession();
         try {
             mongoSession.startTransaction();

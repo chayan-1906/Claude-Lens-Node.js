@@ -19,6 +19,7 @@ class SessionService {
         if (title) filter.title = {$regex: title, $options: 'i'};
         if (source) filter.source = source;
         if (projectDir) filter.projectDir = projectDir;
+        console.debug('DEBUG: Query filter built'.cyan, {filter, page, limit});
 
         const skip: number = (page - 1) * limit;
 
@@ -43,14 +44,16 @@ class SessionService {
     }
 
     static async getSessionBySessionId(sessionId: string): Promise<IGetSessionResponse> {
-        console.log('Service: SessionService.getSessionBySessionId called'.cyan.italic);
+        console.log('Service: SessionService.getSessionBySessionId called'.cyan.italic, {sessionId});
 
         if (!sessionId) {
+            console.debug('DEBUG: Missing sessionId, returning error'.cyan);
             return {error: generateInvalidCode('sessionId')};
         }
 
         const session: ISession | null = await SessionModel.findOne({sessionId});
         if (!session) {
+            console.debug('DEBUG: Session not found'.cyan, {sessionId});
             return {error: generateNotFoundCode('session')};
         }
 
@@ -62,17 +65,20 @@ class SessionService {
     }
 
     static async deleteSession({sessionId}: IDeleteSessionParams): Promise<IDeleteSessionResponse> {
-        console.log('Service: SessionService.deleteSession called'.cyan.italic, sessionId);
+        console.log('Service: SessionService.deleteSession called'.cyan.italic, {sessionId});
 
         if (!sessionId) {
+            console.debug('DEBUG: Missing sessionId, returning error'.cyan);
             return {error: generateInvalidCode('sessionId')};
         }
 
         const session: ISession | null = await SessionModel.findOne({sessionId});
         if (!session) {
+            console.debug('DEBUG: Session not found'.cyan, {sessionId});
             return {error: generateNotFoundCode('session')};
         }
 
+        console.debug('DEBUG: Starting delete transaction'.cyan, {sessionId});
         const mongoSession: ClientSession = await mongoose.startSession();
         try {
             mongoSession.startTransaction();
@@ -106,14 +112,17 @@ class SessionService {
         console.log('Service: SessionService.stubMessages called'.cyan.italic, {sessionId, messageIds});
 
         if (!sessionId) {
+            console.debug('DEBUG: Missing sessionId, returning error'.cyan);
             return {error: generateInvalidCode('sessionId')};
         }
         if (!messageIds || messageIds.length === 0) {
+            console.debug('DEBUG: Missing messageIds, returning error'.cyan);
             return {error: generateMissingCode('messageIds')};
         }
 
         const session: ISession | null = await SessionModel.findOne({sessionId});
         if (!session) {
+            console.debug('DEBUG: Session not found'.cyan, {sessionId});
             return {error: generateNotFoundCode('session')};
         }
 
@@ -171,6 +180,7 @@ class SessionService {
 
         let diskUpdated: boolean = false;
         if (stubbedCount > 0) {
+            console.debug('DEBUG: Rewriting JSONL on disk'.cyan, {sessionId, stubbedCount, stubbedUuids: stubbedUuids.size});
             diskUpdated = SessionService.rewriteJsonl(session.projectDir, session.sessionId, stubbedUuids);
         }
 

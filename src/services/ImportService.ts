@@ -28,6 +28,7 @@ class ImportService {
             throw new Error('Invalid Claude Lens backup: manifest.json missing!');
         }
 
+        console.debug('DEBUG: Manifest found, parsing'.cyan);
         const manifest: IExportManifest = JSON.parse(manifestEntry.getData().toString('utf-8'));
         console.log('Import: manifest parsed'.cyan, {
             projectDir: manifest.projectDir,
@@ -117,6 +118,7 @@ class ImportService {
                 await MessageModel.insertMany(newMessages, {ordered: false});
             }
             totalMessages += newMessages.length;
+            console.debug('DEBUG: Session imported'.cyan, {sessionId: sessionEntry.sessionId, totalLines: lines.length, existingUuids: existingUuids.size, newMessages: newMessages.length});
 
             // Write .jsonl back to disk for Claude Code CLI resume
             const jsonlDiskPath: string = path.join(projectDiskDir, `${sessionEntry.sessionId}.jsonl`);
@@ -155,6 +157,7 @@ class ImportService {
         let totalTasks: number = 0;
         const taskEntries: AdmZip.IZipEntry[] = zip.getEntries().filter((entry) => entry.entryName.startsWith('tasks/') && !entry.isDirectory);
 
+        console.debug('DEBUG: Importing tasks'.cyan, {taskEntries: taskEntries.length});
         for (const taskEntry of taskEntries) {
             const taskData = JSON.parse(taskEntry.getData().toString('utf-8'));
 

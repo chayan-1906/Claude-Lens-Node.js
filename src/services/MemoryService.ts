@@ -41,12 +41,15 @@ class MemoryService {
         console.log('Service: MemoryService.getMemories called'.cyan.italic, {projectDir});
 
         if (!projectDir) {
+            console.debug('DEBUG: Missing projectDir, returning error'.cyan);
             return {error: generateMissingCode('projectDir')};
         }
 
         projectDir = projectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
+        console.debug('DEBUG: Querying memories'.cyan, {projectDir});
         const memories: IMemory[] = await MemoryModel.find({projectDir}).sort({updatedAt: -1});
         if (memories.length === 0) {
+            console.debug('DEBUG: No memories found'.cyan, {projectDir});
             return {error: generateNotFoundCode('memories')};
         }
 
@@ -59,11 +62,13 @@ class MemoryService {
         console.log('Service: MemoryService.deleteMemoriesByProjectDir called'.cyan.italic, projectDir);
 
         if (!projectDir) {
+            console.debug('DEBUG: Missing projectDir, returning error'.cyan);
             return {error: generateMissingCode('projectDir')};
         }
 
         const {deletedCount} = await MemoryModel.deleteMany({projectDir});
         if (deletedCount === 0) {
+            console.debug('DEBUG: No memories to delete'.cyan, {projectDir});
             return {error: generateNotFoundCode('memories')};
         }
 

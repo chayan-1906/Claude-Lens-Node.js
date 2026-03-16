@@ -52,6 +52,7 @@ class ExportService {
                 ...(message.tokenUsage && {tokenUsage: message.tokenUsage}),
             }));
 
+            console.debug('DEBUG: Session JSONL built'.cyan, {sessionId: session.sessionId, messages: messages.length});
             const jsonlContent: string = jsonlLines.join('\n');
             archive.append(jsonlContent, {name: `projects/${session.sessionId}.jsonl`});
 
@@ -103,6 +104,7 @@ class ExportService {
         };
 
         archive.append(JSON.stringify(manifest, null, 2), {name: 'manifest.json'});
+        console.debug('DEBUG: Manifest written'.cyan, {projectDir, totalSessions: sessions.length, totalMemoryFiles: memories.length, totalTasks: tasks.length});
 
         // --- 6. Finalize the archive ---
         await archive.finalize();
