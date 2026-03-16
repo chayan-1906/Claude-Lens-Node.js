@@ -17,6 +17,7 @@ const getSetupStatusController = async (req: Request, res: Response) => {
     try {
         const localConfig: ILocalConfig | null = getLocalConfig();
         const dbConnected: boolean = mongoose.connection.readyState === 1;
+        console.debug('DEBUG: DB readyState'.cyan, {readyState: mongoose.connection.readyState, dbConnected, hasLocalConfig: localConfig !== null});
 
         console.log('SUCCESS: Status fetched'.bgGreen.bold, {configured: dbConnected, hasLocalConfig: localConfig !== null});
         res.status(200).send(new ApiResponse({
@@ -45,6 +46,7 @@ const setupController = async (req: Request, res: Response) => {
         const {mongoUri}: ISetupBody = req.body;
 
         if (!mongoUri) {
+            console.warn('WARN: Missing mongoUri in request body'.yellow.bold);
             res.status(400).send(new ApiResponse({
                 success: false,
                 errorCode: generateMissingCode('mongoUri'),
@@ -54,16 +56,20 @@ const setupController = async (req: Request, res: Response) => {
         }
 
         // Validate by attempting a test connection
+        console.debug('DEBUG: Attempting test connection to MongoDB'.cyan);
         const testConnection: mongoose.Connection = await mongoose.createConnection(mongoUri, {
             serverSelectionTimeoutMS: 5000,
         }).asPromise();
 
         await testConnection.close();
+        console.debug('DEBUG: Test connection succeeded, closing test connection'.cyan);
 
         // Test passed — save to local config
         saveLocalConfig({MONGO_URI: mongoUri});
+        console.debug('DEBUG: Local config saved'.cyan);
 
         // Connect the app's main DB using the new URI
+        console.debug('DEBUG: Connecting app DB with new URI'.cyan);
         await connectDB(mongoUri);
 
         console.log('SUCCESS: Setup complete'.bgGreen.bold);

@@ -13,9 +13,11 @@ const exportProjectController = async (req: Request, res: Response) => {
     try {
         const {projectDir}: Partial<IExportParams> = req.params;
         const sessionId: string | undefined = req.query.sessionId as string | undefined;
+        console.debug('DEBUG: Received params'.cyan, {projectDir, sessionId});
 
         // --- Validate projectDir ---
         if (!projectDir) {
+            console.warn('WARN: Missing projectDir param'.yellow.bold, projectDir);
             res.status(400).send(new ApiResponse({
                 success: false,
                 errorCode: generateMissingCode('projectDir'),
@@ -27,6 +29,7 @@ const exportProjectController = async (req: Request, res: Response) => {
         // --- Resolve rawProjectDir from any session in this project ---
         const session: ISession | null = await SessionModel.findOne({projectDir}, {rawProjectDir: 1}).lean();
         if (!session) {
+            console.warn('WARN: No sessions found for project'.yellow.bold, {projectDir});
             res.status(404).send(new ApiResponse({
                 success: false,
                 errorCode: generateNotFoundCode('project'),
@@ -35,11 +38,14 @@ const exportProjectController = async (req: Request, res: Response) => {
             return;
         }
         const rawProjectDir: string = session.rawProjectDir;
+        console.debug('DEBUG: Resolved rawProjectDir'.cyan, {rawProjectDir});
 
         // --- If sessionId provided, verify it belongs to this project ---
         if (sessionId) {
+            console.debug('DEBUG: Verifying sessionId belongs to project'.cyan, {sessionId, projectDir});
             const sessionExists: ISession | null = await SessionModel.findOne({sessionId, projectDir}).lean();
             if (!sessionExists) {
+                console.warn('WARN: sessionId not found in project'.yellow.bold, {sessionId, projectDir});
                 res.status(404).send(new ApiResponse({
                     success: false,
                     errorCode: generateNotFoundCode('session'),
@@ -47,6 +53,7 @@ const exportProjectController = async (req: Request, res: Response) => {
                 }));
                 return;
             }
+            console.debug('DEBUG: sessionId verified, session exists'.cyan);
         }
 
         // --- Build filename and set response headers ---
@@ -74,9 +81,14 @@ const exportProjectController = async (req: Request, res: Response) => {
         });
 
         archive.pipe(res);
+        console.debug('DEBUG: Archive piped to response, delegating to ExportService'.cyan);
 
         // --- Delegate ZIP assembly to service ---
         const {totalSessions, totalMemoryFiles, totalTasks, error} = await ExportService.exportProject({projectDir, rawProjectDir, sessionId, archive});
+
+        if (error) {
+            console.error('ERROR: ExportService returned error'.red.bold, error);
+        }
 
         console.log('SUCCESS: Export streamed'.bgGreen.bold, {projectDir, sessionId: sessionId ?? 'all', totalSessions, totalMemoryFiles, totalTasks});
     } catch (error: any) {

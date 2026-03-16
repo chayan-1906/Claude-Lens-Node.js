@@ -13,6 +13,7 @@ const getAllTasksController = async (req: Request, res: Response) => {
 
         const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
         const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+        console.debug('DEBUG: Received query params'.cyan, {sessionId: sessionId ?? 'all', page, limit});
 
         const {tasks, pagination} = await TaskService.getAllTasks({sessionId, page, limit});
 
@@ -37,9 +38,11 @@ const getTaskController = async (req: Request, res: Response) => {
 
     try {
         const {sessionId, taskId}: Partial<IGetTaskParams> = req.params;
+        console.debug('DEBUG: Received params'.cyan, {sessionId, taskId});
 
         const {task, error} = await TaskService.getTask({sessionId, taskId});
         if (error || !task) {
+            console.warn('WARN: TaskService.getTask returned error'.yellow.bold, {error, sessionId, taskId});
             let errorMsg: string = 'Failed to retrieve task!';
             let statusCode: number = 500;
 
@@ -82,9 +85,11 @@ const deleteTasksBySessionIdController = async (req: Request, res: Response) => 
 
     try {
         const {sessionId}: Partial<IDeleteTasksBySessionParams> = req.params;
+        console.debug('DEBUG: Received params'.cyan, {sessionId});
 
         const {deletedTasks, error} = await TaskService.deleteTasksBySessionId({sessionId});
         if (error) {
+            console.warn('WARN: TaskService.deleteTasksBySessionId returned error'.yellow.bold, {error, sessionId});
             let errorMsg: string = 'Failed to delete tasks!';
             let statusCode: number = 500;
 

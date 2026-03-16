@@ -13,6 +13,7 @@ const getAllMemoriesController = async (req: Request, res: Response) => {
 
         const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
         const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+        console.debug('DEBUG: Received query params'.cyan, {projectDir: projectDir ?? 'all', page, limit});
 
         const {memories, pagination} = await MemoryService.getAllMemories({projectDir, page, limit});
 
@@ -37,9 +38,11 @@ const getMemoriesController = async (req: Request, res: Response) => {
 
     try {
         const {projectDir}: Partial<IGetMemoriesParams> = req.params;
+        console.debug('DEBUG: Received params'.cyan, {projectDir});
 
         const {memories, error} = await MemoryService.getMemories({projectDir});
         if (error || !memories) {
+            console.warn('WARN: MemoryService.getMemories returned error'.yellow.bold, {error, projectDir});
             let errorMsg: string = 'Failed to retrieve memories!';
             let statusCode: number = 500;
 
@@ -79,8 +82,10 @@ const deleteMemoriesByProjectDirController = async (req: Request, res: Response)
 
     try {
         const {projectDir}: Partial<IGetMemoriesParams> = req.params;
+        console.debug('DEBUG: Received params'.cyan, {projectDir});
 
         if (!projectDir) {
+            console.warn('WARN: Missing projectDir param'.yellow.bold);
             res.status(400).send(new ApiResponse({
                 success: false,
                 errorCode: generateMissingCode('projectDir'),
@@ -91,6 +96,7 @@ const deleteMemoriesByProjectDirController = async (req: Request, res: Response)
 
         const {deletedMemories, error} = await MemoryService.deleteMemoriesByProjectDir(projectDir);
         if (error) {
+            console.warn('WARN: MemoryService.deleteMemoriesByProjectDir returned error'.yellow.bold, {error, projectDir});
             let errorMsg: string = 'Failed to delete memories!';
             let statusCode: number = 500;
 

@@ -31,6 +31,7 @@ const deleteProjectController = async (req: Request, res: Response) => {
 
     try {
         const {projectDir}: Partial<IDeleteProjectParams> = req.params;
+        console.debug('DEBUG: Received params'.cyan, {projectDir});
 
         const {deletedSessions, deletedMessages, deletedTasks, deletedMemories, error} = await ProjectService.deleteProject({projectDir});
         if (error) {

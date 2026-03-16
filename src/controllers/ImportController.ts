@@ -12,6 +12,7 @@ const upload: multer.Multer = multer({
         if (file.mimetype === 'application/zip' || file.originalname.endsWith('.zip')) {
             cb(null, true);
         } else {
+            console.warn('WARN: Rejected non-zip file upload'.yellow.bold, {originalname: file.originalname, mimetype: file.mimetype});
             cb(new Error('Only .zip files are accepted!'));
         }
     },
@@ -26,6 +27,7 @@ const importProjectController = async (req: Request, res: Response) => {
     try {
         const file: Express.Multer.File | undefined = req.file;
         if (!file) {
+            console.warn('WARN: No .zip file in request'.yellow.bold, file);
             res.status(400).send(new ApiResponse({
                 success: false,
                 errorCode: 'ZIP_MISSING',
@@ -34,8 +36,12 @@ const importProjectController = async (req: Request, res: Response) => {
             return;
         }
 
-        const remappedProjectDir: string | undefined = req.body.projectDir as string | undefined;
+        console.debug('DEBUG: Received file'.cyan, {originalname: file.originalname, size: file.size, mimetype: file.mimetype});
 
+        const remappedProjectDir: string | undefined = req.body.projectDir as string | undefined;
+        console.debug('DEBUG: remappedProjectDir'.cyan, {remappedProjectDir: remappedProjectDir ?? 'none (will use original)'});
+
+        console.debug('DEBUG: Delegating to ImportService'.cyan);
         const {totalSessions, totalMessages, totalMemoryFiles, totalTasks} = await ImportService.importProject({
             zipBuffer: file.buffer,
             remappedProjectDir: remappedProjectDir || undefined,

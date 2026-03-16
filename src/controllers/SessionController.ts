@@ -13,8 +13,12 @@ const getAllSessionsController = async (req: Request, res: Response) => {
 
     try {
         const {title, source, projectDir} = req.query as Record<string, string | undefined>;
+        const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+        console.debug('DEBUG: Received query params'.cyan, {title, source, projectDir, page, limit});
 
         if (source !== undefined && !VALID_SOURCES.includes(source)) {
+            console.warn('WARN: Invalid source filter'.yellow.bold, {source, validSources: VALID_SOURCES});
             res.status(400).send(new ApiResponse({
                 success: false,
                 errorCode: generateInvalidCode('source'),
@@ -22,9 +26,6 @@ const getAllSessionsController = async (req: Request, res: Response) => {
             }));
             return;
         }
-
-        const page: number = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
 
         const {sessions, pagination} = await SessionService.getAllSessions({
             title,
@@ -55,9 +56,11 @@ const getSessionController = async (req: Request, res: Response) => {
 
     try {
         const {sessionId}: Partial<IGetSessionParams> = req.params;
+        console.debug('DEBUG: Received params'.cyan, {sessionId});
 
         const {session, messages, error} = await SessionService.getSessionBySessionId(sessionId || '');
         if (error || !session || !messages) {
+            console.warn('WARN: SessionService.getSessionBySessionId returned error'.yellow.bold, {error, sessionId});
             let errorMsg: string = 'Failed to retrieve session!';
             let statusCode: number = 500;
 
@@ -98,9 +101,11 @@ const deleteSessionController = async (req: Request, res: Response) => {
 
     try {
         const {sessionId}: Partial<IDeleteSessionParams> = req.params;
+        console.debug('DEBUG: Received params'.cyan, {sessionId});
 
         const {deletedSessions, deletedMessages, error} = await SessionService.deleteSession({sessionId});
         if (error) {
+            console.warn('WARN: SessionService.deleteSession returned error'.yellow.bold, {error, sessionId});
             let errorMsg: string = 'Failed to delete session!';
             let statusCode: number = 500;
 
@@ -142,9 +147,11 @@ const stubMessagesController = async (req: Request, res: Response) => {
     try {
         const {sessionId}: Partial<IStubMessagesParams> = req.params;
         const {messageIds}: Partial<IStubMessagesParams> = req.body;
+        console.debug('DEBUG: Received params'.cyan, {sessionId, messageIdsCount: messageIds?.length ?? 0});
 
         const {stubbedCount, diskUpdated, error} = await SessionService.stubMessages({sessionId, messageIds: messageIds ?? []});
         if (error) {
+            console.warn('WARN: SessionService.stubMessages returned error'.yellow.bold, {error, sessionId});
             let errorMsg: string = 'Failed to stub messages!';
             let statusCode: number = 500;
 
