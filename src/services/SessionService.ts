@@ -118,7 +118,7 @@ class SessionService {
         }
 
         let stubbedCount: number = 0;
-        const stubbedUuids: Map<string, Array<{tool_use_id: string; tokenCount: number}>> = new Map();
+        const stubbedUuids: Map<string, {toolResults: Array<{tool_use_id: string; tokenCount: number}>; hasThinking: boolean}> = new Map();
 
         for (const messageId of messageIds) {
             if (!Types.ObjectId.isValid(messageId)) continue;
@@ -131,26 +131,40 @@ class SessionService {
 
             let modified: boolean = false;
             const blockStubs: Array<{tool_use_id: string; tokenCount: number}> = [];
+            let thinkingStubbed: boolean = false;
 
             message.content = (message.content as ContentBlock[]).map((block: ContentBlock) => {
-                if (block.type !== 'tool_result' || (block as any)._stubbed) return block;
-                const tokenCount: number = Math.round((block.content as string).length / 4);
-                modified = true;
-                blockStubs.push({tool_use_id: block.tool_use_id, tokenCount});
-                return {
-                    type: 'tool_result' as const,
-                    tool_use_id: block.tool_use_id,
-                    content: `[content removed — was ~${tokenCount} tokens]`,
-                    is_error: block.is_error,
-                    _stubbed: true,
-                    _originalTokenCount: tokenCount,
-                };
+                if (block.type === 'tool_result' && !(block as any)._stubbed) {
+                    const tokenCount: number = Math.round((block.content as string).length / 4);
+                    modified = true;
+                    blockStubs.push({tool_use_id: block.tool_use_id, tokenCount});
+                    return {
+                        type: 'tool_result' as const,
+                        tool_use_id: block.tool_use_id,
+                        content: `[content removed — was ~${tokenCount} tokens]`,
+                        is_error: block.is_error,
+                        _stubbed: true,
+                        _originalTokenCount: tokenCount,
+                    };
+                }
+                if (block.type === 'thinking' && !(block as any)._stubbed) {
+                    const tokenCount: number = Math.round(block.thinking.length / 4);
+                    modified = true;
+                    thinkingStubbed = true;
+                    return {
+                        type: 'thinking' as const,
+                        thinking: `[thinking removed — was ~${tokenCount} tokens]`,
+                        _stubbed: true,
+                        _originalTokenCount: tokenCount,
+                    };
+                }
+                return block;
             });
 
             if (modified) {
                 message.markModified('content');
                 await message.save();
-                stubbedUuids.set(message.uuid, blockStubs);
+                stubbedUuids.set(message.uuid, {toolResults: blockStubs, hasThinking: thinkingStubbed});
                 stubbedCount++;
             }
         }
@@ -164,7 +178,7 @@ class SessionService {
         return {stubbedCount, diskUpdated};
     }
 
-    private static rewriteJsonl(projectDir: string, sessionId: string, stubbedUuids: Map<string, Array<{tool_use_id: string; tokenCount: number}>>): boolean {
+    private static rewriteJsonl(projectDir: string, sessionId: string, stubbedUuids: Map<string, {toolResults: Array<{tool_use_id: string; tokenCount: number}>; hasThinking: boolean}>): boolean {
         const jsonlPath: string = path.join(CLAUDE_PROJECTS_DIR, projectDir, `${sessionId}.jsonl`);
 
         if (!fs.existsSync(jsonlPath)) {
@@ -189,22 +203,35 @@ class SessionService {
             const message: Record<string, unknown> = event.message as Record<string, unknown>;
             if (!message || !Array.isArray(message.content)) return line;
 
-            const stubMap: Map<string, number> = new Map(
-                stubbedUuids.get(uuid)!.map(({tool_use_id, tokenCount}) => [tool_use_id, tokenCount]),
+            const stubInfo = stubbedUuids.get(uuid)!;
+            const toolResultMap: Map<string, number> = new Map(
+                stubInfo.toolResults.map(({tool_use_id, tokenCount}) => [tool_use_id, tokenCount]),
             );
 
             message.content = (message.content as Record<string, unknown>[]).map((block: Record<string, unknown>) => {
-                if (block.type !== 'tool_result') return block;
-                const toolUseId: string = block.tool_use_id as string;
-                if (!stubMap.has(toolUseId)) return block;
-                const tokenCount: number = stubMap.get(toolUseId)!;
-                // Write native Claude Code format — strip _stubbed/_originalTokenCount (MongoDB-only metadata)
-                return {
-                    type: 'tool_result',
-                    tool_use_id: toolUseId,
-                    content: `[content removed — was ~${tokenCount} tokens]`,
-                    is_error: block.is_error,
-                };
+                if (block.type === 'tool_result') {
+                    const toolUseId: string = block.tool_use_id as string;
+                    if (!toolResultMap.has(toolUseId)) return block;
+                    const tokenCount: number = toolResultMap.get(toolUseId)!;
+                    // Write native Claude Code format — strip _stubbed/_originalTokenCount (MongoDB-only metadata)
+                    return {
+                        type: 'tool_result',
+                        tool_use_id: toolUseId,
+                        content: `[content removed — was ~${tokenCount} tokens]`,
+                        is_error: block.is_error,
+                    };
+                }
+                if (block.type === 'thinking' && stubInfo.hasThinking) {
+                    const thinking: string = block.thinking as string;
+                    if (thinking.startsWith('[thinking removed')) return block;
+                    const tokenCount: number = Math.round(thinking.length / 4);
+                    // Write native Claude Code format — strip _stubbed/_originalTokenCount (MongoDB-only metadata)
+                    return {
+                        type: 'thinking',
+                        thinking: `[thinking removed — was ~${tokenCount} tokens]`,
+                    };
+                }
+                return block;
             });
 
             return JSON.stringify(event);
