@@ -10,6 +10,7 @@ import {getLocalIP} from "./utils/getLocalIP";
 import taskRoutes from "./routes/TaskRoutes";
 import setupRoutes from "./routes/SetupRoutes";
 import exportRoutes from "./routes/ExportRoutes";
+import importRoutes from "./routes/ImportRoutes";
 import memoryRoutes from "./routes/MemoryRoutes";
 import projectRoutes from "./routes/ProjectRoutes";
 import sessionRoutes from "./routes/SessionRoutes";
@@ -32,6 +33,7 @@ app.use('/api/v1/sessions', sessionRoutes);
 app.use('/api/v1/tasks', taskRoutes);
 app.use('/api/v1/memories', memoryRoutes);
 app.use('/api/v1/export', exportRoutes);
+app.use('/api/v1/import', importRoutes);
 app.use('/api/v1/file-picker', filePickerRoutes);
 app.get('/', function (req: Request, res: Response) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');

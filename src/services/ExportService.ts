@@ -48,6 +48,7 @@ class ExportService {
                 cwd: session.rawProjectDir,
                 gitBranch: session.gitBranch ?? 'HEAD',
                 userType: 'external',
+                version: 1,
                 ...(message.tokenUsage && {tokenUsage: message.tokenUsage}),
             }));
 
