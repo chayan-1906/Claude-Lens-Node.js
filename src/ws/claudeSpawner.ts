@@ -85,6 +85,7 @@ function toNdjson(text: string): string {
  * Do NOT close stdin after calling — the process stays alive for more turns.
  */
 function sendMessage(claudeProcess: ChildProcess, text: string): void {
+    console.debug('DEBUG: Writing follow-up message to claude stdin'.cyan, {textLength: text.length});
     claudeProcess.stdin!.write(toNdjson(text));
 }
 
@@ -108,6 +109,7 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
 
     // Pipe prior conversation context first (edit_session reconstruction), then the new user message
     if (contextNdjson) {
+        console.debug('DEBUG: Piping context NDJSON to stdin'.cyan, {contextUserCount, contextBytes: contextNdjson.length});
         claudeProcess.stdin!.write(contextNdjson);
     }
 

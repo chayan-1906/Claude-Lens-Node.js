@@ -11,10 +11,16 @@ import mongoose from "mongoose";
 async function reclaimCollectionStorage(collectionName: string): Promise<void> {
     try {
         const db: mongoose.mongo.Db | undefined = mongoose.connection.db;
-        if (!db) return;
+        if (!db) {
+            console.debug('DEBUG: No DB connection, skipping reclaim'.cyan, {collectionName});
+            return;
+        }
 
         const count: number = await db.collection(collectionName).countDocuments();
-        if (count > 0) return;
+        if (count > 0) {
+            console.debug('DEBUG: Collection not empty, skipping reclaim'.cyan, {collectionName, count});
+            return;
+        }
 
         await db.dropCollection(collectionName);
         console.log(`Storage: Dropped empty '${collectionName}' collection to reclaim fragmented space`.green);

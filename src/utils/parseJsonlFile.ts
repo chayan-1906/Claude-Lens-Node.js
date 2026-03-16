@@ -1,3 +1,4 @@
+import "colors";
 import fs from "fs";
 import path from "path";
 import {EMessageRole} from "../models/Message";
@@ -35,6 +36,7 @@ function computeTotalInputTokens(usage: Record<string, unknown>): number {
  * Returns null if file has no user/assistant messages
  */
 function parseJsonlFile(filePath: string): IParsedFile | null {
+    console.debug('DEBUG: Parsing JSONL file'.cyan, {file: path.basename(filePath)});
     const raw: string = fs.readFileSync(filePath, 'utf-8');
     const lines: string[] = raw.split('\n');
 
@@ -165,8 +167,12 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         messages.push(parsedMessage);
     }
 
-    if (messages.length === 0) return null;
+    if (messages.length === 0) {
+        console.debug('DEBUG: No messages found, skipping file'.cyan, {file: path.basename(filePath)});
+        return null;
+    }
 
+    console.debug('DEBUG: Parsed JSONL file'.cyan, {file: path.basename(filePath), sessionId, messages: messages.length, title: customTitle || slug || firstUserMessage?.substring(0, 40) || 'Untitled'});
     return {
         sessionId,
         projectDir,
