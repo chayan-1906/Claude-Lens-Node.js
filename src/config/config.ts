@@ -19,8 +19,7 @@ export const {
     MONGO_URI,
     BACKEND_URL,
     FRONTEND_URL,
-    APPNAME,
-    TAGLINE,
+    APP_VERSION,
 } = process.env;
 
 /** Validate required env vars at startup — fail fast with clear error */
