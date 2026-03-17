@@ -220,6 +220,33 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         console.log('WebSocket: Client connected'.green.bold);
 
         let claudeProcess: ChildProcess | null = null;
+        let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+        /**
+         * Schedule a sync callback with 1500ms delay (debounced).
+         * Claude emits the result event before finishing JSONL writes,
+         * so the delay gives it time to flush. Cancels any pending timer.
+         */
+        const scheduleSync = (fn: () => void): void => {
+            if (syncTimer) clearTimeout(syncTimer);
+            syncTimer = setTimeout(() => {
+                syncTimer = null;
+                fn();
+            }, 1500);
+        }
+
+        /**
+         * Cancel any pending scheduled sync and run the given callback immediately.
+         * Used on process_exit where JSONL writes are guaranteed complete.
+         */
+        const flushSync = (fn: () => void): void => {
+            if (syncTimer) {
+                console.debug('DEBUG: Clearing pending sync timer — process_exit takes priority'.cyan);
+                clearTimeout(syncTimer);
+                syncTimer = null;
+            }
+            fn();
+        }
 
         webSocket.on('message', async (raw: Buffer) => {
             let clientMessage: ClientMessage;
@@ -309,7 +336,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         : clientMessage;
 
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
-                    claudeProcess = spawnClaude(spawnMessage, webSocket, autoSync);
+                    claudeProcess = spawnClaude(spawnMessage, webSocket, () => scheduleSync(autoSync));
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
@@ -318,11 +345,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             webSocket.send(JSON.stringify({type: 'process_exit', code}));
                         }
 
-                        // Sync on exit guarantees all JSONL writes are complete.
-                        // The per-turn result-event sync may fire before claude finishes
-                        // writing assistant messages to the JSONL file, so this is the
+                        // Flush: cancel any pending result-event sync and run immediately.
+                        // On exit all JSONL writes are guaranteed complete — this is the
                         // authoritative sync that captures the final state.
-                        autoSync();
+                        flushSync(autoSync);
 
                         claudeProcess = null;
                     });
@@ -422,14 +448,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     };
 
                     console.log(`WebSocket: edit_session — spawning fresh session (cwd: ${spawnMsg.projectDir}, contextUserCount: ${contextUserCount})`.cyan);
-                    claudeProcess = spawnClaude(spawnMsg, webSocket, afterEditSync, captureSessionId, contextNdjson, contextUserCount);
+                    claudeProcess = spawnClaude(spawnMsg, webSocket, () => scheduleSync(afterEditSync), captureSessionId, contextNdjson, contextUserCount);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: edit_session claude process exited with code ${code}`.cyan);
                         if (webSocket.readyState === WebSocket.OPEN) {
                             webSocket.send(JSON.stringify({type: 'process_exit', code}));
                         }
-                        afterEditSync();
+                        flushSync(afterEditSync);
                         claudeProcess = null;
                     });
 

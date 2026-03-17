@@ -85,7 +85,7 @@ function toNdjson(text: string): string {
  * Do NOT close stdin after calling — the process stays alive for more turns.
  */
 function sendMessage(claudeProcess: ChildProcess, text: string): void {
-    console.debug('DEBUG: Writing follow-up message to claude stdin'.cyan, {textLength: text.length});
+    console.debug('DEBUG: Writing follow-up message to claude stdin'.cyan, {text});
     claudeProcess.stdin!.write(toNdjson(text));
 }
 
@@ -178,11 +178,9 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     webSocket.send(JSON.stringify(event));
                 }
                 if (event.type === 'result') {
-                    // Delay sync by 1.5s — claude emits the result event on stdout
-                    // before it finishes writing the assistant message to the JSONL
-                    // file. Syncing immediately means the assistant turn is missed.
-                    console.log('WebSocket: result event received — scheduling sync in 1500ms'.cyan);
-                    setTimeout(onResult, 1500);
+                    // Notify the caller — timing/debounce is handled by the caller
+                    console.log('WebSocket: result event received — notifying caller for sync'.cyan);
+                    onResult();
                 }
             } catch {
                 // Non-JSON line from claude stdout (e.g. startup text or plain-text error)
