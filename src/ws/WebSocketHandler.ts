@@ -12,7 +12,7 @@ import SessionService from "../services/SessionService";
 import SessionModel, {ISession} from "../models/Session";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
-import {ClientMessage, IEditSessionMessage, INewSessionMessage, IResumeSessionMessage} from "../types/ws";
+import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage} from "../types/ws";
 
 /**
  * Check if the local JSONL session file exists for the given projectDir + sessionId.
@@ -326,6 +326,24 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 // to locate the session file, so it must match the original project dir
                                 clientMessage.projectDir = session.rawProjectDir;
                                 console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${session.rawProjectDir}`.cyan);
+                            }
+
+                            // Guard: verify rawProjectDir actually exists on disk before spawning.
+                            // Without this, spawn('claude', args, {cwd: missing_dir}) crashes with ENOENT.
+                            if (!fs.existsSync(clientMessage.projectDir!)) {
+                                console.warn(`WebSocket: [TRACE] projectDir does not exist on disk: ${clientMessage.projectDir}`.yellow);
+                                if (webSocket.readyState === WebSocket.OPEN) {
+                                    const projectNotAvailable: IProjectNotAvailableMessage = {
+                                        type: 'project_not_available',
+                                        sessionId: clientMessage.sessionId,
+                                        projectDir: clientMessage.projectDir!,
+                                        warning: `Project directory "${clientMessage.projectDir}" does not exist on this machine. The session cannot be resumed here.`,
+                                        session: session as unknown as Record<string, unknown>,
+                                        messages: (messages ?? []) as unknown as Record<string, unknown>[],
+                                    };
+                                    webSocket.send(JSON.stringify(projectNotAvailable));
+                                }
+                                break;
                             }
                         }
                         // MongoDB error or session not in DB — fall through and let claude handle it
