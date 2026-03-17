@@ -41,6 +41,11 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
     const lines: string[] = raw.split('\n');
 
     const messages: IParsedMessage[] = [];
+    // Track uuid → parentUuid for ALL entries (including non-stored ones like result, system,
+    // progress, file-history-snapshot) so we can re-parent stored messages whose parentUuid
+    // references a non-stored entry — without this, getActiveBranch's tree walk breaks at
+    // turn boundaries where result entries act as bridge nodes.
+    const allUuidToParent: Map<string, string | undefined> = new Map();
     let sessionId: string = '';
     let projectDir: string = '';
     let rawProjectDir: string = '';
@@ -78,6 +83,14 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         }
         if (parsedLine.slug) {
             slug = parsedLine.slug as string;
+        }
+
+        // Record uuid → parentUuid for every entry (before any type-specific continue).
+        // Non-stored entries (result, system, progress, etc.) must still be tracked so
+        // we can resolve parentUuid chains for stored messages in the post-loop pass.
+        const entryUuid: string | undefined = parsedLine.uuid as string | undefined;
+        if (entryUuid) {
+            allUuidToParent.set(entryUuid, parsedLine.parentUuid as string | undefined);
         }
 
         // Extract custom title from /rename command
@@ -165,6 +178,19 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         }
 
         messages.push(parsedMessage);
+    }
+
+    // Re-parent stored messages: if a message's parentUuid points to a non-stored entry
+    // (result, system, progress, etc.), walk up through ancestors until finding a stored
+    // uuid or reaching root (undefined). This keeps the parentUuid chain intact for
+    // getActiveBranch's tree walk on the frontend.
+    const storedUuids: Set<string> = new Set(messages.map((m: IParsedMessage) => m.uuid));
+    for (const message of messages) {
+        let parent: string | undefined = message.parentUuid;
+        while (parent && !storedUuids.has(parent)) {
+            parent = allUuidToParent.get(parent);
+        }
+        message.parentUuid = parent;
     }
 
     if (messages.length === 0) {
