@@ -17,6 +17,7 @@ import projectRoutes from "./routes/ProjectRoutes";
 import sessionRoutes from "./routes/SessionRoutes";
 import {attachWebSocket} from "./ws/WebSocketHandler";
 import filePickerRoutes from "./routes/FilePickerRoutes";
+import toolApprovalRoutes from "./routes/ToolApprovalRoutes";
 
 // rest object
 const app: Express = express();
@@ -37,6 +38,7 @@ app.use('/api/v1/export', exportRoutes);
 app.use('/api/v1/import', importRoutes);
 app.use('/api/v1/voice', voiceRoutes);
 app.use('/api/v1/file-picker', filePickerRoutes);
+app.use('/api/v1/tool-approval', toolApprovalRoutes);
 app.get('/', function (req: Request, res: Response) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');
 });

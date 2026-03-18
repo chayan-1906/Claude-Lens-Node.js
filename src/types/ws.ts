@@ -31,12 +31,39 @@ export interface IEditSessionMessage {
     projectDir?: string;
 }
 
+export interface IToolApprovalDetails {
+    requestId: string;
+    sessionId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+    toolUseId: string;
+}
+
+export interface IToolApprovalDecision {
+    permissionDecision: 'allow' | 'deny';
+    permissionDecisionReason?: string;
+}
+
+export interface IPendingApproval {
+    resolve: (decision: IToolApprovalDecision) => void;
+    reject: (reason: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
+}
+
 /** Client → Server: interrupt/stop Claude's current execution (equivalent to Esc in terminal) */
 export interface IStopExecutionMessage {
     type: 'stop_execution';
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage | IStopExecutionMessage;
+/** Client → Server: user's decision on a pending tool approval */
+export interface IToolApprovalResponseMessage {
+    type: 'tool_approval_response';
+    requestId: string;
+    decision: 'allow' | 'deny';
+    reason?: string;
+}
+
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage | IStopExecutionMessage | IToolApprovalResponseMessage;
 
 
 /** ------------- Server → Client messages ------------- */
@@ -65,5 +92,15 @@ export interface IProjectNotAvailableMessage {
 }
 
 
+/** Server → Client: tool approval request (DiffView + approve/deny) */
+export interface IToolApprovalRequestMessage {
+    type: 'tool_approval_request';
+    requestId: string;
+    sessionId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+    toolUseId: string;
+}
+
 /** stream-json events are forwarded as-is (system, assistant, result) */
-export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | Record<string, unknown>;
+export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | IToolApprovalRequestMessage | Record<string, unknown>;

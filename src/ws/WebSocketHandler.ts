@@ -12,7 +12,8 @@ import SessionService from "../services/SessionService";
 import SessionModel, {ISession} from "../models/Session";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
-import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage} from "../types/ws";
+import {cleanupSession, registerSession, resolveApproval} from "./toolApprovalStore";
+import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, IToolApprovalResponseMessage} from "../types/ws";
 
 /**
  * Check if the local JSONL session file exists for the given projectDir + sessionId.
@@ -221,6 +222,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
         let claudeProcess: ChildProcess | null = null;
         let syncTimer: ReturnType<typeof setTimeout> | null = null;
+        let activeSessionId: string | null = null;
+
+        /** Register session → WS mapping when system event provides the session_id */
+        const onSystemEvent = (event: Record<string, unknown>): void => {
+            if (event.type === 'system' && event.session_id) {
+                activeSessionId = event.session_id as string;
+                registerSession(activeSessionId, webSocket);
+            }
+        }
 
         /**
          * Schedule a sync callback with 1500ms delay (debounced).
@@ -354,7 +364,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         : clientMessage;
 
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
-                    claudeProcess = spawnClaude(spawnMessage, webSocket, () => scheduleSync(autoSync));
+                    claudeProcess = spawnClaude(spawnMessage, webSocket, () => scheduleSync(autoSync), onSystemEvent);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
@@ -411,10 +421,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     let newSessionId: string | null = null;
                     let parentSessionIdSet: boolean = false;
 
-                    // Capture new session_id from the system event
+                    // Capture new session_id from the system event + register for tool approval
                     const captureSessionId = (event: Record<string, unknown>): void => {
                         if (event.type === 'system') {
                             newSessionId = event.session_id as string;
+                            activeSessionId = newSessionId;
+                            registerSession(activeSessionId, webSocket);
                             console.log(`WebSocket: edit_session — new session_id captured: ${newSessionId}`.cyan);
                         }
                     };
@@ -511,6 +523,19 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     break;
                 }
 
+                case 'tool_approval_response': {
+                    const approvalMsg: IToolApprovalResponseMessage = clientMessage as IToolApprovalResponseMessage;
+                    console.log(`WebSocket: Received tool_approval_response (requestId: ${approvalMsg.requestId}, decision: ${approvalMsg.decision})`.cyan);
+                    const resolved: boolean = resolveApproval(approvalMsg.requestId, {
+                        permissionDecision: approvalMsg.decision,
+                        permissionDecisionReason: approvalMsg.reason,
+                    });
+                    if (!resolved) {
+                        console.warn(`WebSocket: No pending approval found for requestId: ${approvalMsg.requestId}`.yellow);
+                    }
+                    break;
+                }
+
                 default: {
                     sendError(webSocket, `Unknown message type: ${(clientMessage as any).type}`);
                 }
@@ -519,6 +544,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
         webSocket.on('close', () => {
             console.log('WebSocket: Client disconnected'.yellow);
+            if (activeSessionId) {
+                cleanupSession(activeSessionId);
+                activeSessionId = null;
+            }
             if (claudeProcess) {
                 console.log('WebSocket: Killing claude process (SIGTERM)'.yellow);
                 claudeProcess.kill('SIGTERM');
