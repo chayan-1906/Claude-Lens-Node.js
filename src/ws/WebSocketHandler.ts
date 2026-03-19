@@ -87,6 +87,7 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
         .map((message) => JSON.stringify({
             type: message.role,
             uuid: message.uuid,
+            parentUuid: message.parentUuid ?? null,
             sessionId: session.sessionId,
             timestamp: (message.timestamp as Date).toISOString(),
             cwd: session.rawProjectDir,
