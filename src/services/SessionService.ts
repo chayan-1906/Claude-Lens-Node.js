@@ -16,7 +16,7 @@ class SessionService {
         console.log('Service: SessionService.getAllSessions called'.cyan.italic);
 
         const filter: Record<string, unknown> = {};
-        if (title) filter.title = {$regex: title, $options: 'i'};
+        if (title) filter.title = {$regex: title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i'};
         if (source) filter.source = source;
         if (projectDir) filter.projectDir = projectDir;
         console.debug('DEBUG: Query filter built'.cyan, {filter, page, limit});
