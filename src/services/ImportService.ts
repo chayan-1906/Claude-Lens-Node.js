@@ -6,8 +6,9 @@ import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
-import SessionModel, {ESessionSource} from "../models/Session";
 import {IExportManifest} from "../types/export";
+import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
+import SessionModel, {ESessionSource} from "../models/Session";
 import {IImportResult, IImportServiceParams, IJsonlLine} from "../types/import";
 
 /** Base directory for Claude Code project data */
@@ -40,7 +41,7 @@ class ImportService {
         // --- 2. Resolve projectDir (use remapped if provided) ---
         const rawProjectDir: string = remappedProjectDir || manifest.projectDir;
         const projectDir: string = remappedProjectDir
-            ? remappedProjectDir.replace(/\//g, '-')
+            ? remappedProjectDir.replace(NON_ALPHANUMERIC_REGEX, '-')
             : manifest.claudeNativeFolderName;
 
         console.log('Import: resolved paths'.cyan, {rawProjectDir, projectDir});
