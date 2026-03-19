@@ -148,30 +148,43 @@ async function reconstructAndSaveTasks(sessionId: string): Promise<number> {
     return tasks.length;
 }
 
+/** Marker path segment used to extract relative memory file paths */
+const MEMORY_PATH_MARKER: string = '/memory/';
+
 /**
- * Reconstruct MEMORY.md from MongoDB and write it to
- * ~/.claude/projects/{projectDir}/memory/MEMORY.md.
- * Skips if the file already exists on disk.
- * Returns true if the file was restored.
+ * Reconstruct all memory files from MongoDB and write them to
+ * ~/.claude/projects/{projectDir}/memory/.
+ * Skips if the memory directory already exists with files on disk.
+ * Returns true if any files were restored.
  */
 async function reconstructAndSaveMemory(projectDir: string): Promise<boolean> {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
-    const memoryFilePath: string = path.join(claudeProjectsDir, projectDir, 'memory', 'MEMORY.md');
+    const memoryDir: string = path.join(claudeProjectsDir, projectDir, 'memory');
 
-    // Skip if MEMORY.md already exists on disk
-    if (fs.existsSync(memoryFilePath)) {
+    // Skip if memory dir already exists with files
+    if (fs.existsSync(memoryDir) && fs.readdirSync(memoryDir).length > 0) {
         return false;
     }
 
-    const memory = await MemoryModel.findOne({projectDir});
-    if (!memory) {
+    const memories = await MemoryModel.find({projectDir});
+    if (memories.length === 0) {
         return false;
     }
 
-    fs.mkdirSync(path.dirname(memoryFilePath), {recursive: true});
-    fs.writeFileSync(memoryFilePath, memory.content, 'utf-8');
+    fs.mkdirSync(memoryDir, {recursive: true});
 
-    console.log(`WebSocket: Reconstructed MEMORY.md at ${memoryFilePath}`.cyan);
+    for (const memory of memories) {
+        // Extract relative path after /memory/ marker — mirrors ExportService pattern
+        const markerIndex: number = memory.filePath.lastIndexOf(MEMORY_PATH_MARKER);
+        const relPath: string = markerIndex >= 0
+            ? memory.filePath.substring(markerIndex + MEMORY_PATH_MARKER.length)
+            : path.basename(memory.filePath);
+        const outputPath: string = path.join(memoryDir, relPath);
+        fs.mkdirSync(path.dirname(outputPath), {recursive: true});
+        fs.writeFileSync(outputPath, memory.content, 'utf-8');
+    }
+
+    console.log(`WebSocket: Reconstructed ${memories.length} memory file(s) at ${memoryDir}`.cyan);
     return true;
 }
 
@@ -337,7 +350,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 try {
                                     await reconstructAndSaveMemory(session.projectDir);
                                 } catch (memoryError: unknown) {
-                                    console.error(`WebSocket: Failed to reconstruct MEMORY.md — ${memoryError}`.red);
+                                    console.error(`WebSocket: Failed to reconstruct memory files — ${memoryError}`.red);
                                 }
 
                                 // Set cwd so claude --resume hashes the correct project dir

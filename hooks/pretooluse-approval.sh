@@ -1,9 +1,9 @@
 #!/bin/bash
-# PreToolUse hook for Claude Lens — sends Edit/Write tool calls to the backend
-# for user approval before execution. The hook blocks until the user responds
-# (approve/deny) via the Web UI.
+# PreToolUse hook for Claude Lens — sends Edit/Write/Bash and MCP tool calls
+# to the backend for user approval before execution. The hook blocks until
+# the user responds (approve/deny) via the Web UI.
 #
-# Registered in ~/.claude/settings.json with matcher: "Edit|Write|Bash"
+# Registered in ~/.claude/settings.json with matcher: "Edit|Write|Bash|mcp__.*"
 # Claude CLI pauses while this hook runs (600s default timeout).
 
 INPUT=$(cat)
