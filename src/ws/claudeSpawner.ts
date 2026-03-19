@@ -105,6 +105,7 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     const claudeProcess: ChildProcess = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: message.projectDir || undefined,
+        detached: true,
     });
 
     // Pipe prior conversation context first (edit_session reconstruction), then the new user message

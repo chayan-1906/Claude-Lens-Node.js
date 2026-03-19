@@ -218,6 +218,47 @@ function getActiveBranch(messages: IMessage[]): IMessage[] {
 }
 
 /**
+ * Kill the Claude process and its entire process group.
+ * Step 1: SIGTERM (graceful shutdown).
+ * Step 2: SIGKILL after 500ms if still alive (force kill).
+ * Uses negative PID to kill the entire process group (requires detached: true on spawn).
+ */
+function killClaudeProcess(claudeProcess: ChildProcess): void {
+    if (!claudeProcess || claudeProcess.killed) return;
+
+    const pid: number | undefined = claudeProcess.pid;
+
+    // Step 1: Graceful shutdown
+    if (pid) {
+        try {
+            process.kill(-pid, 'SIGTERM');
+        } catch {
+            claudeProcess.kill('SIGTERM');
+        }
+    } else {
+        claudeProcess.kill('SIGTERM');
+    }
+
+    // Step 2: Force kill if still alive after 500ms
+    const forceKillTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+        if (!claudeProcess.killed) {
+            console.log('WebSocket: Claude process still alive after 500ms — sending SIGKILL'.yellow);
+            if (pid) {
+                try {
+                    process.kill(-pid, 'SIGKILL');
+                } catch {
+                    claudeProcess.kill('SIGKILL');
+                }
+            } else {
+                claudeProcess.kill('SIGKILL');
+            }
+        }
+    }, 500);
+
+    claudeProcess.once('exit', () => clearTimeout(forceKillTimer));
+}
+
+/**
  * Attach a WebSocketServer to the given HTTP server at path /ws.
  * Handles message routing, claude process lifecycle, and auto-sync.
  * No auth needed — both servers always run locally on the same Mac inside the .app bundle.
@@ -418,7 +459,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     // Kill existing claude process if active (live chat edit scenario)
                     if (claudeProcess) {
                         console.log('WebSocket: edit_session — killing active claude process before forking'.yellow);
-                        claudeProcess.kill('SIGTERM');
+                        killClaudeProcess(claudeProcess);
                         claudeProcess = null;
                     }
 
@@ -543,8 +584,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         sendError(webSocket, 'No active session to stop!');
                         break;
                     }
-                    console.log('WebSocket: Received stop_execution — sending SIGINT to claude process'.yellow);
-                    claudeProcess.kill('SIGINT');
+                    console.log('WebSocket: Received stop_execution — killing claude process (SIGTERM → SIGKILL)'.yellow);
+                    killClaudeProcess(claudeProcess);
+                    if (webSocket.readyState === WebSocket.OPEN) {
+                        webSocket.send(JSON.stringify({type: 'session_stopped'}));
+                    }
                     break;
                 }
 
@@ -574,8 +618,8 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 activeSessionId = null;
             }
             if (claudeProcess) {
-                console.log('WebSocket: Killing claude process (SIGTERM)'.yellow);
-                claudeProcess.kill('SIGTERM');
+                console.log('WebSocket: Killing claude process (SIGTERM → SIGKILL)'.yellow);
+                killClaudeProcess(claudeProcess);
                 claudeProcess = null;
             }
         });

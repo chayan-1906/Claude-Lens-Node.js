@@ -103,5 +103,10 @@ export interface IToolApprovalRequestMessage {
     toolUseId: string;
 }
 
+/** Server → Client: confirms the Claude process was killed after stop_execution */
+export interface ISessionStoppedMessage {
+    type: 'session_stopped';
+}
+
 /** stream-json events are forwarded as-is (system, assistant, result) */
-export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | IToolApprovalRequestMessage | Record<string, unknown>;
+export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | IToolApprovalRequestMessage | ISessionStoppedMessage | Record<string, unknown>;
