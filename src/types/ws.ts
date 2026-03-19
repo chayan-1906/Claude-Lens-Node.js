@@ -45,6 +45,7 @@ export interface IToolApprovalDecision {
 }
 
 export interface IPendingApproval {
+    sessionId: string;
     resolve: (decision: IToolApprovalDecision) => void;
     reject: (reason: Error) => void;
     timeout: ReturnType<typeof setTimeout>;

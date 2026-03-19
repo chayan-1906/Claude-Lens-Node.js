@@ -42,7 +42,7 @@ function createApproval(details: IToolApprovalDetails): Promise<IToolApprovalDec
             reject(new Error(`Approval request timed out after ${APPROVAL_TIMEOUT_MS / 1000}s`));
         }, APPROVAL_TIMEOUT_MS);
 
-        pendingApprovals.set(details.requestId, {resolve, reject, timeout});
+        pendingApprovals.set(details.requestId, {sessionId: details.sessionId, resolve, reject, timeout});
 
         // Send approval request to the frontend
         ws.send(JSON.stringify({
@@ -82,6 +82,7 @@ function resolveApproval(requestId: string, decision: IToolApprovalDecision): bo
  */
 function cleanupSession(sessionId: string): void {
     for (const [requestId, pending] of pendingApprovals.entries()) {
+        if (pending.sessionId !== sessionId) continue;
         clearTimeout(pending.timeout);
         pending.reject(new Error('Session disconnected'));
         pendingApprovals.delete(requestId);
