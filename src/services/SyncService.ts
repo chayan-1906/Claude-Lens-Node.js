@@ -5,10 +5,10 @@ import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
+import SessionModel from "../models/Session";
 import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
-import SessionModel, {ESessionSource} from "../models/Session";
 import {ALL_SYNC_TARGETS, IParsedFile, IParsedMessage, ISyncMemoriesResponse, ISyncParams, ISyncResponse, ISyncTasksResponse, RawTask, SyncTarget} from "../types/sync";
 
 // --- Constants ---
@@ -165,7 +165,6 @@ class SyncService {
                 rawProjectDir: parsedFile.rawProjectDir,
                 gitBranch: parsedFile.gitBranch,
                 slug: parsedFile.slug,
-                source: ESessionSource.WEBUI,
                 contextTokensUsed: parsedFile.contextTokensUsed,
                 contextWindowSize: 200000,
             },

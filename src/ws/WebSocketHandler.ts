@@ -9,8 +9,8 @@ import MemoryModel from "../models/Memory";
 import {IMessage} from "../models/Message";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
-import SessionModel, {ISession} from "../models/Session";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
+import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {cleanupSession, registerSession, resolveApproval} from "./toolApprovalStore";
 import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, IToolApprovalResponseMessage} from "../types/ws";
@@ -259,6 +259,17 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             fn();
         }
 
+        /** Sync then label the active session as web-UI originated */
+        const autoSyncWebUI = async (): Promise<void> => {
+            await autoSync();
+            if (activeSessionId) {
+                await SessionModel.updateOne(
+                    {sessionId: activeSessionId},
+                    {$set: {source: ESessionSource.WEBUI}},
+                );
+            }
+        }
+
         webSocket.on('message', async (raw: Buffer) => {
             let clientMessage: ClientMessage;
             try {
@@ -365,7 +376,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         : clientMessage;
 
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
-                    claudeProcess = spawnClaude(spawnMessage, webSocket, () => scheduleSync(autoSync), onSystemEvent);
+                    claudeProcess = spawnClaude(spawnMessage, webSocket, () => scheduleSync(autoSyncWebUI), onSystemEvent);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
@@ -377,7 +388,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         // Flush: cancel any pending result-event sync and run immediately.
                         // On exit all JSONL writes are guaranteed complete — this is the
                         // authoritative sync that captures the final state.
-                        flushSync(autoSync);
+                        flushSync(autoSyncWebUI);
 
                         claudeProcess = null;
                     });
@@ -434,7 +445,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     // After each sync: set parentSessionId + inherit title on the new session
                     const afterEditSync = async (): Promise<void> => {
-                        await autoSync();
+                        await autoSyncWebUI();
                         if (newSessionId && !parentSessionIdSet) {
                             parentSessionIdSet = true;
                             try {
