@@ -34,13 +34,17 @@ function isLocalSessionAvailable(projectDir: string, sessionId: string): boolean
 
     // Validate: if any user/assistant message has empty content, the JSONL is broken.
     // Claude exits with code 1 on resume when it encounters content: [] in the session.
+    // Also: a JSONL with only metadata (e.g. last-prompt) and no user/assistant entries
+    // is effectively empty — Claude CLI writes last-prompt on every run, even failed ones.
     // Return false so the caller falls back to reconstructing from MongoDB.
     try {
         const lines: string[] = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean);
         console.log(`WebSocket: [TRACE] isLocalSessionAvailable — file found, validating ${lines.length} lines`.cyan);
+        let hasConversationEntry: boolean = false;
         for (const line of lines) {
             const entry = JSON.parse(line) as Record<string, unknown>;
             if (entry.type === 'user' || entry.type === 'assistant') {
+                hasConversationEntry = true;
                 const content = (entry.message as Record<string, unknown>)?.content;
                 const contentSummary: string = !content ? 'null/undefined'
                     : Array.isArray(content) ? `ContentBlock[${(content as unknown[]).length}]`
@@ -52,6 +56,11 @@ function isLocalSessionAvailable(projectDir: string, sessionId: string): boolean
                 }
             }
         }
+
+        if (!hasConversationEntry) {
+            console.warn(`WebSocket: [TRACE] isLocalSessionAvailable — BROKEN (no user/assistant entries, only metadata) → false`.yellow);
+            return false;
+        }
     } catch (err) {
         console.error(`WebSocket: [TRACE] isLocalSessionAvailable — parse error: ${err} → false`.red);
         return false;
@@ -59,6 +68,60 @@ function isLocalSessionAvailable(projectDir: string, sessionId: string): boolean
 
     console.log(`WebSocket: [TRACE] isLocalSessionAvailable — VALID → true`.cyan);
     return true;
+}
+
+/**
+ * Repair a local JSONL session file by stripping trailing orphaned tool_use entries.
+ * The Anthropic API returns 400 if the conversation history has tool_use blocks in an
+ * assistant message without a matching tool_result in the next user message.
+ * This happens when a session is interrupted mid-tool-call (e.g. force quit, tab close).
+ *
+ * Strategy: walk backwards from the end of the JSONL. If the last user/assistant entry
+ * is an assistant message whose content ends with tool_use blocks (no following tool_result),
+ * remove it. Repeat until the history ends cleanly.
+ */
+function repairOrphanedToolUse(projectDir: string, sessionId: string): void {
+    const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+    const projectDirHash: string = projectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
+    const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
+
+    if (!fs.existsSync(jsonlPath)) return;
+
+    try {
+        const lines: string[] = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean);
+        let trimCount: number = 0;
+
+        // Walk backwards: remove trailing assistant entries that end with tool_use
+        // and have no following user entry with tool_result
+        while (lines.length > 0) {
+            const lastLine: string = lines[lines.length - 1];
+            const entry = JSON.parse(lastLine) as Record<string, unknown>;
+
+            if (entry.type !== 'assistant') break;
+
+            const message = entry.message as Record<string, unknown> | undefined;
+            const content = message?.content;
+            if (!Array.isArray(content)) break;
+
+            const hasToolUse: boolean = (content as Record<string, unknown>[]).some(
+                (block: Record<string, unknown>) => block.type === 'tool_use',
+            );
+
+            if (!hasToolUse) break;
+
+            // This assistant message has tool_use blocks with no following tool_result — remove it
+            lines.pop();
+            trimCount++;
+            console.log(`WebSocket: [REPAIR] Removed orphaned tool_use assistant entry (trimCount: ${trimCount})`.yellow);
+        }
+
+        if (trimCount > 0) {
+            fs.writeFileSync(jsonlPath, lines.join('\n') + '\n', 'utf-8');
+            console.log(`WebSocket: [REPAIR] Repaired JSONL — removed ${trimCount} trailing orphaned tool_use entries from ${jsonlPath}`.yellow);
+        }
+    } catch (err) {
+        console.error(`WebSocket: [REPAIR] Failed to repair JSONL — ${err}`.red);
+    }
 }
 
 /**
@@ -75,21 +138,82 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
 
     fs.mkdirSync(sessionDir, {recursive: true});
 
-    const lines: string[] = messages
-        .filter((message) => {
-            const content = message.content;
-            if (Array.isArray(content) && content.length === 0) {
-                console.warn(`WebSocket: Skipping ${message.role} message (uuid: ${message.uuid}) — empty content array`.yellow);
-                return false;
+    // Step 1: Filter out messages with empty content (stripped thinking/tool blocks)
+    const filtered: IMessage[] = messages.filter((message: IMessage) => {
+        const content = message.content;
+        if (Array.isArray(content) && content.length === 0) {
+            console.warn(`WebSocket: [RECONSTRUCT] Skipping ${message.role} message (uuid: ${message.uuid}) — empty content array`.yellow);
+            return false;
+        }
+        return true;
+    });
+
+    // Step 2: Collect all tool_use IDs present in assistant messages
+    const toolUseIds: Set<string> = new Set();
+    for (const message of filtered) {
+        if (message.role === 'assistant' && Array.isArray(message.content)) {
+            for (const block of message.content as Record<string, unknown>[]) {
+                if (block.type === 'tool_use' && typeof block.id === 'string') {
+                    toolUseIds.add(block.id);
+                }
             }
-            return true;
-        })
-        .map((message) => JSON.stringify({
+        }
+    }
+
+    // Step 3: Strip orphaned tool_result blocks (reference tool_use IDs that were stripped)
+    // and remove user messages that become empty after stripping
+    const cleaned: IMessage[] = [];
+    for (const message of filtered) {
+        if (message.role === 'user' && Array.isArray(message.content)) {
+            const blocks = (message.content as Record<string, unknown>[]).filter((block: Record<string, unknown>) => {
+                if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+                    if (!toolUseIds.has(block.tool_use_id)) {
+                        console.warn(`WebSocket: [RECONSTRUCT] Stripping orphaned tool_result (tool_use_id: ${block.tool_use_id}) from user message (uuid: ${message.uuid})`.yellow);
+                        return false;
+                    }
+                }
+                return true;
+            });
+            if (blocks.length === 0) {
+                console.warn(`WebSocket: [RECONSTRUCT] Removing user message (uuid: ${message.uuid}) — all content was orphaned tool_results`.yellow);
+                continue;
+            }
+            cleaned.push({...message, content: blocks} as IMessage);
+        } else {
+            cleaned.push(message);
+        }
+    }
+
+    // Step 4: Merge consecutive same-role messages to maintain valid alternation.
+    // Filtering empty-content messages can leave consecutive user or assistant entries
+    // which the Anthropic API rejects with 400.
+    const merged: IMessage[] = [];
+    for (const message of cleaned) {
+        const prev: IMessage | undefined = merged[merged.length - 1];
+        if (prev && prev.role === message.role) {
+            console.warn(`WebSocket: [RECONSTRUCT] Merging consecutive ${message.role} message (uuid: ${message.uuid}) into previous (uuid: ${prev.uuid})`.yellow);
+            // Normalize both to ContentBlock[] and concatenate
+            const prevContent: Record<string, unknown>[] = typeof prev.content === 'string'
+                ? [{type: 'text', text: prev.content}]
+                : prev.content as Record<string, unknown>[];
+            const curContent: Record<string, unknown>[] = typeof message.content === 'string'
+                ? [{type: 'text', text: message.content}]
+                : message.content as Record<string, unknown>[];
+            (prev as unknown as Record<string, unknown>).content = [...prevContent, ...curContent];
+        } else {
+            merged.push(message);
+        }
+    }
+
+    console.log(`WebSocket: [RECONSTRUCT] Pipeline: ${messages.length} raw → ${filtered.length} filtered → ${cleaned.length} cleaned → ${merged.length} merged`.cyan);
+
+    const lines: string[] = merged
+        .map((message: IMessage) => JSON.stringify({
             type: message.role,
             uuid: message.uuid,
             parentUuid: message.parentUuid ?? null,
             sessionId: session.sessionId,
-            timestamp: (message.timestamp as Date).toISOString(),
+            timestamp: message.timestamp ? (message.timestamp as Date).toISOString() : new Date().toISOString(),
             cwd: session.rawProjectDir,
             message: {
                 role: message.role,
@@ -403,6 +527,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 clientMessage.projectDir = session.rawProjectDir;
                                 console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${session.rawProjectDir}`.cyan);
                             }
+
+                            // Repair: strip trailing orphaned tool_use entries from the JSONL.
+                            // The Anthropic API returns 400 if an assistant tool_use has no matching tool_result.
+                            repairOrphanedToolUse(session.projectDir, clientMessage.sessionId);
 
                             // Guard: verify rawProjectDir actually exists on disk before spawning.
                             // Without this, spawn('claude', args, {cwd: missing_dir}) crashes with ENOENT.
