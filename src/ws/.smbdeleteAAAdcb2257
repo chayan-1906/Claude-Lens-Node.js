@@ -442,20 +442,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
          * Called immediately when a result event arrives (before the debounced sync).
          * contextWindowSize is account-level (Pro=200k, Team=10M) — stored per session
          * so historical sessions can display accurate context info.
-         *
-         * Uses the last assistant event's per-call usage (attached by claudeSpawner as
-         * _lastAssistantUsage) for accurate context — result.usage is cumulative across
-         * all API calls/turns in the interaction, NOT the current context size.
          */
         const persistResultContext = async (resultEvent: Record<string, unknown>): Promise<void> => {
             if (!activeSessionId) return;
 
-            // Prefer last assistant's per-call usage (actual context) over cumulative result.usage.
-            // result.usage is cumulative across all API calls/turns — NOT the current context size.
-            // claudeSpawner attaches the last assistant event's usage as _lastAssistantUsage.
-            const lastAssistantUsage = resultEvent._lastAssistantUsage as Record<string, number> | undefined;
-            const resultUsage = resultEvent.usage as Record<string, number> | undefined;
-            const usage: Record<string, number> | undefined = lastAssistantUsage ?? resultUsage;
+            const usage = resultEvent.usage as Record<string, number> | undefined;
             const modelUsage = resultEvent.modelUsage as Record<string, Record<string, number>> | undefined;
             if (!usage) return;
 
@@ -480,7 +471,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     {sessionId: activeSessionId},
                     {$set: update},
                 );
-                console.log(`WebSocket: Persisted context — sessionId: ${activeSessionId}, tokens: ${totalInput}${lastAssistantUsage ? ' (per-call)' : ' (cumulative fallback)'}, contextWindow: ${contextWindow ?? 'unchanged'}`.cyan);
+                console.log(`WebSocket: Persisted context — sessionId: ${activeSessionId}, tokens: ${totalInput}, contextWindow: ${contextWindow ?? 'unchanged'}`.cyan);
             } catch (error: unknown) {
                 console.error(`WebSocket: Failed to persist context — ${error}`.red);
             }

@@ -125,6 +125,9 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     // only forward events from the final turn (the actual new user message response).
     const contextTurnsToSkip: number = contextUserCount ?? 0;
     let contextResultsSeen: number = 0;
+    // Track the last assistant event's per-call usage for accurate context calculation.
+    // result.usage is cumulative across all turns; this holds the LAST call's actual context.
+    let lastAssistantUsage: Record<string, unknown> | null = null;
 
     claudeProcess.stdout!.on('data', (chunk: Buffer) => {
         buffer += chunk.toString();
@@ -175,12 +178,25 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     continue;
                 }
 
+                // Track last assistant event's per-call usage for accurate context
+                if (event.type === 'assistant') {
+                    const msgObj = event.message as Record<string, unknown> | undefined;
+                    if (msgObj?.usage) {
+                        lastAssistantUsage = msgObj.usage as Record<string, unknown>;
+                    }
+                }
+
                 if (onEvent) onEvent(event);
                 if (webSocket.readyState === WebSocket.OPEN) {
                     webSocket.send(JSON.stringify(event));
                 }
                 if (event.type === 'result') {
-                    // Notify the caller with the full result event — timing/debounce is handled by the caller
+                    // Attach last assistant's per-call usage so persistResultContext can use
+                    // it for accurate context (result.usage is cumulative across all turns).
+                    if (lastAssistantUsage) {
+                        event._lastAssistantUsage = lastAssistantUsage;
+                        lastAssistantUsage = null;
+                    }
                     console.log('WebSocket: result event received — notifying caller for sync'.cyan);
                     onResult(event);
                 }

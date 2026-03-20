@@ -98,29 +98,10 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             customTitle = parsedLine.customTitle as string;
         }
 
-        // Extract real token usage from result events and attach to preceding assistant message.
-        // The result event's usage is more accurate than the assistant event's message.usage,
-        // so it overwrites whatever the assistant event set.
+        // Skip result events — result.usage is cumulative across all API calls/turns,
+        // NOT the current context size. contextTokensUsed is set from the last assistant
+        // event's per-call usage below, which reflects the actual context.
         if (lineType === 'result') {
-            const usage: Record<string, unknown> | undefined = parsedLine.usage as Record<string, unknown> | undefined;
-            if (usage) {
-                const totalInput: number = computeTotalInputTokens(usage);
-
-                // Track latest result event's input tokens as context window usage
-                contextTokensUsed = totalInput;
-
-                // Also overwrite the preceding assistant message's tokenUsage with the
-                // more accurate result-event figure
-                if (messages.length > 0) {
-                    const lastMessage: IParsedMessage = messages[messages.length - 1];
-                    if (lastMessage.role === EMessageRole.ASSISTANT) {
-                        lastMessage.tokenUsage = {
-                            input: totalInput,
-                            output: (usage.output_tokens as number) || 0,
-                        };
-                    }
-                }
-            }
             continue;
         }
 
@@ -170,10 +151,16 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             }
             const usage: Record<string, unknown> | undefined = message.usage as Record<string, unknown> | undefined;
             if (usage) {
+                const perCallInput: number = computeTotalInputTokens(usage);
                 parsedMessage.tokenUsage = {
-                    input: computeTotalInputTokens(usage),
+                    input: perCallInput,
                     output: (usage.output_tokens as number) || 0,
                 };
+                // Track the last assistant's per-call usage as context — this is the
+                // actual current context size (unlike result.usage which is cumulative).
+                if (perCallInput > 0) {
+                    contextTokensUsed = perCallInput;
+                }
             }
         }
 
