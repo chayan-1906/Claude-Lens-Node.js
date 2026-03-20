@@ -166,6 +166,7 @@ class SyncService {
                 gitBranch: parsedFile.gitBranch,
                 slug: parsedFile.slug,
                 contextTokensUsed: parsedFile.contextTokensUsed,
+                contextWindowSize: 200000,
             },
             {upsert: true, returnDocument: 'after'},
         );

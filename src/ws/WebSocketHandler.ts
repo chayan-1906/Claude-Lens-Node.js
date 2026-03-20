@@ -437,6 +437,42 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             fn();
         }
 
+        /**
+         * Persist contextWindowSize + contextTokensUsed from the result event to MongoDB.
+         * Called immediately when a result event arrives (before the debounced sync).
+         * contextWindowSize is account-level (Pro=200k, Team=10M) — stored per session
+         * so historical sessions can display accurate context info.
+         */
+        const persistResultContext = async (resultEvent: Record<string, unknown>): Promise<void> => {
+            if (!activeSessionId) return;
+
+            const usage = resultEvent.usage as Record<string, number> | undefined;
+            const modelUsage = resultEvent.modelUsage as Record<string, Record<string, number>> | undefined;
+            if (!usage) return;
+
+            const totalInput: number = (usage.input_tokens ?? 0)
+                + (usage.cache_creation_input_tokens ?? 0)
+                + (usage.cache_read_input_tokens ?? 0);
+
+            const modelKey: string | undefined = modelUsage ? Object.keys(modelUsage)[0] : undefined;
+            const contextWindow: number | undefined = modelKey ? modelUsage?.[modelKey]?.contextWindow : undefined;
+
+            const update: Record<string, number> = {contextTokensUsed: totalInput};
+            if (contextWindow) {
+                update.contextWindowSize = contextWindow;
+            }
+
+            try {
+                await SessionModel.findOneAndUpdate(
+                    {sessionId: activeSessionId},
+                    {$set: update},
+                );
+                console.log(`WebSocket: Persisted context — tokens: ${totalInput}, contextWindow: ${contextWindow ?? 'unchanged'}`.cyan);
+            } catch (error: unknown) {
+                console.error(`WebSocket: Failed to persist context — ${error}`.red);
+            }
+        }
+
         /** Sync then label the active session as web-UI originated */
         const autoSyncWebUI = async (): Promise<void> => {
             await autoSync();
@@ -558,7 +594,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         : clientMessage;
 
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
-                    claudeProcess = spawnClaude(spawnMessage, webSocket, () => scheduleSync(autoSyncWebUI), onSystemEvent);
+                    claudeProcess = spawnClaude(spawnMessage, webSocket, (resultEvent: Record<string, unknown>) => {
+                         scheduleSync(async (): Promise<void> => {
+                            await autoSyncWebUI();
+                            await persistResultContext(resultEvent);
+                        });
+                    }, onSystemEvent);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
@@ -649,7 +690,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 console.error(`WebSocket: edit_session — failed to set parentSessionId: ${err}`.red);
                             }
                         }
-                    };
+                    }
 
                     // Build context: apply getActiveBranch then slice at editAtUuid (or take all for regenerate)
                     const activeMessages: IMessage[] = getActiveBranch(rawMessages || []);
@@ -672,7 +713,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     };
 
                     console.log(`WebSocket: edit_session — spawning fresh session (cwd: ${spawnMsg.projectDir}, contextUserCount: ${contextUserCount})`.cyan);
-                    claudeProcess = spawnClaude(spawnMsg, webSocket, () => scheduleSync(afterEditSync), captureSessionId, contextNdjson, contextUserCount);
+                    claudeProcess = spawnClaude(spawnMsg, webSocket, (resultEvent: Record<string, unknown>) => {
+                        scheduleSync(async (): Promise<void> => {
+                            await afterEditSync();
+                            await persistResultContext(resultEvent);
+                        });
+                    }, captureSessionId, contextNdjson, contextUserCount);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: edit_session claude process exited with code ${code}`.cyan);

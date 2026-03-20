@@ -94,11 +94,12 @@ function sendMessage(claudeProcess: ChildProcess, text: string): void {
  * and stream stdout lines to the WebSocket.
  * stdin is kept open — call sendMessage() for follow-up turns.
  * onResult is called after each completed turn (result event) for per-turn auto-sync.
+ * Receives the parsed result event so the caller can extract contextWindow/usage data.
  * onEvent is an optional hook called for every parsed stdout event before WS forwarding.
  * contextNdjson is optional prior-conversation context piped to stdin before the first user message.
  * Returns the spawned ChildProcess so the caller can manage its lifecycle.
  */
-function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: () => void, onEvent?: (event: Record<string, unknown>) => void, contextNdjson?: string, contextUserCount?: number): ChildProcess {
+function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: (resultEvent: Record<string, unknown>) => void, onEvent?: (event: Record<string, unknown>) => void, contextNdjson?: string, contextUserCount?: number): ChildProcess {
     const args: string[] = buildArgs(message);
     console.log(`WebSocket: Spawning claude ${args.join(' ')}`.cyan);
 
@@ -179,9 +180,9 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     webSocket.send(JSON.stringify(event));
                 }
                 if (event.type === 'result') {
-                    // Notify the caller — timing/debounce is handled by the caller
+                    // Notify the caller with the full result event — timing/debounce is handled by the caller
                     console.log('WebSocket: result event received — notifying caller for sync'.cyan);
-                    onResult();
+                    onResult(event);
                 }
             } catch {
                 // Non-JSON line from claude stdout (e.g. startup text or plain-text error)
