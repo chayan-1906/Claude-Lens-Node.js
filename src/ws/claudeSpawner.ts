@@ -178,6 +178,27 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     continue;
                 }
 
+                // --- Debug logging for stream-json events ---
+                if (event.type === 'system') {
+                    const subtype: string = (event.subtype as string) ?? 'init';
+                    console.debug(`WebSocket: [stream] system → subtype: ${subtype}, session_id: ${event.session_id}`.gray);
+                } else if (event.type === 'assistant') {
+                    const msgObj = event.message as Record<string, unknown> | undefined;
+                    const content = msgObj?.content as Array<Record<string, unknown>> | undefined;
+                    const blockTypes: string = content?.map((b) => b.type).join(', ') ?? '?';
+                    const stopReason: string = (msgObj?.stop_reason as string) ?? 'null';
+                    console.debug(`WebSocket: [stream] assistant → blocks: [${blockTypes}], stop_reason: ${stopReason}`.gray);
+                } else if (event.type === 'user') {
+                    const msgObj = event.message as Record<string, unknown> | undefined;
+                    const content = msgObj?.content as Array<Record<string, unknown>> | undefined;
+                    const blockTypes: string = content?.map((b) => b.type).join(', ') ?? '?';
+                    console.debug(`WebSocket: [stream] user → blocks: [${blockTypes}]`.gray);
+                } else if (event.type === 'rate_limit_event') {
+                    console.debug('WebSocket: [stream] rate_limit_event'.yellow);
+                } else if (event.type !== 'result' && event.type !== 'stream_event') {
+                    console.debug(`WebSocket: [stream] ${event.type}`.gray);
+                }
+
                 // Track last assistant event's per-call usage for accurate context
                 if (event.type === 'assistant') {
                     const msgObj = event.message as Record<string, unknown> | undefined;

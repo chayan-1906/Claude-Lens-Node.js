@@ -55,6 +55,10 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
     let customTitle: string | undefined;
     let firstUserMessage: string = '';
     let contextTokensUsed: number | undefined;
+    // Track last assistant message.id for merging split JSONL entries.
+    // Claude CLI writes each content block as a separate JSONL line, but they
+    // share the same message.id and should be combined into a single message.
+    let lastAssistantMsgId: string | null = null;
 
     for (let i: number = 0; i < lines.length; i++) {
         const line: string = lines[i].trim();
@@ -128,14 +132,57 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             aiModel = message.model as string;
         }
 
-        // Apply sync filters to assistant content blocks
+        // Apply sync filters to content blocks
         let content: string | Record<string, unknown>[] = message.content as string | Record<string, unknown>[];
         if (Array.isArray(content)) {
             if (STRIP_THINKING_BLOCKS) content = content.filter((block) => (block as Record<string, unknown>).type !== 'thinking');
             if (STRIP_TOOL_RESULTS) content = content.filter((block) => (block as Record<string, unknown>).type !== 'tool_result');
         }
 
-        // Build parsedLine message
+        // Merge consecutive assistant JSONL entries with the same message.id.
+        // Claude CLI writes each content block (thinking, text, tool_use) as a separate
+        // JSONL line, but they belong to the same logical message. Merge them so the
+        // historical view matches the live streaming view.
+        const msgId: string | undefined = message.id as string | undefined;
+
+        if (messageRole === EMessageRole.ASSISTANT && msgId && msgId === lastAssistantMsgId && messages.length > 0) {
+            const lastMsg: IParsedMessage = messages[messages.length - 1];
+            if (lastMsg.role === EMessageRole.ASSISTANT && Array.isArray(lastMsg.content) && Array.isArray(content)) {
+                // Redirect the OLD merged uuid so that any message whose parentUuid
+                // points to it (e.g. a tool_result for a specific tool_use block) will
+                // re-parent to the final merged uuid instead of walking to root.
+                const previousMergedUuid: string = lastMsg.uuid;
+                const newUuid: string = parsedLine.uuid as string;
+                allUuidToParent.set(previousMergedUuid, newUuid);
+
+                // Append new blocks to existing message
+                (lastMsg.content as Record<string, unknown>[]).push(...(content as Record<string, unknown>[]));
+                // Update uuid + timestamp to latest entry's values.
+                // IMPORTANT: Do NOT update parentUuid — the first entry's parentUuid
+                // points to the previous stored message (e.g. user prompt). Updating it
+                // would set it to an intermediate UUID within this merged group, which
+                // the redirect above maps forward to the merged uuid → self-loop.
+                lastMsg.uuid = newUuid;
+                lastMsg.timestamp = new Date(parsedLine.timestamp as string);
+                if (message.model) {
+                    lastMsg.aiModel = message.model as string;
+                }
+                const usage: Record<string, unknown> | undefined = message.usage as Record<string, unknown> | undefined;
+                if (usage) {
+                    const perCallInput: number = computeTotalInputTokens(usage);
+                    lastMsg.tokenUsage = {
+                        input: perCallInput,
+                        output: (usage.output_tokens as number) || 0,
+                    };
+                    if (perCallInput > 0) {
+                        contextTokensUsed = perCallInput;
+                    }
+                }
+                continue;
+            }
+        }
+
+        // Build new message entry
         const parsedMessage: IParsedMessage = {
             uuid: parsedLine.uuid as string,
             parentUuid: parsedLine.parentUuid as string | undefined,
@@ -145,7 +192,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         };
 
         if (messageRole === EMessageRole.ASSISTANT) {
-            // Extract aiModel from each assistant message (for message-level)
+            lastAssistantMsgId = msgId ?? null;
             if (message.model) {
                 parsedMessage.aiModel = message.model as string;
             }
@@ -156,12 +203,13 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
                     input: perCallInput,
                     output: (usage.output_tokens as number) || 0,
                 };
-                // Track the last assistant's per-call usage as context — this is the
-                // actual current context size (unlike result.usage which is cumulative).
                 if (perCallInput > 0) {
                     contextTokensUsed = perCallInput;
                 }
             }
+        } else {
+            // Reset on user message — prevents merging across user/assistant boundaries
+            lastAssistantMsgId = null;
         }
 
         messages.push(parsedMessage);
