@@ -59,7 +59,7 @@ class SessionService {
 
         const messages = await MessageModel.find({sessionInternalId: session._id}).sort({timestamp: 1});
 
-        console.log('Database: Session fetched'.cyan, {sessionId, messages: messages.length});
+        console.log('Database: Session fetched'.cyan, {sessionId, messages: messages.length, contextTokensUsed: session.contextTokensUsed, contextWindowSize: session.contextWindowSize});
 
         return {session, messages};
     }

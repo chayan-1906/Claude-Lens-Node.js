@@ -156,17 +156,23 @@ class SyncService {
      * Upserts session, incrementally inserts only new messages
      */
     private static async syncFile(parsedFile: IParsedFile): Promise<number> {
+        const updateFields: Record<string, unknown> = {
+            title: parsedFile.title,
+            aiModel: parsedFile.aiModel,
+            projectDir: parsedFile.projectDir,
+            rawProjectDir: parsedFile.rawProjectDir,
+            gitBranch: parsedFile.gitBranch,
+            slug: parsedFile.slug,
+        };
+        // Only set contextTokensUsed when > 0 — avoids overwriting valid values
+        // with zeros from rejected API calls (e.g. "Prompt is too long")
+        if (parsedFile.contextTokensUsed && parsedFile.contextTokensUsed > 0) {
+            updateFields.contextTokensUsed = parsedFile.contextTokensUsed;
+        }
+
         const session = await SessionModel.findOneAndUpdate(
             {sessionId: parsedFile.sessionId},
-            {
-                title: parsedFile.title,
-                aiModel: parsedFile.aiModel,
-                projectDir: parsedFile.projectDir,
-                rawProjectDir: parsedFile.rawProjectDir,
-                gitBranch: parsedFile.gitBranch,
-                slug: parsedFile.slug,
-                contextTokensUsed: parsedFile.contextTokensUsed,
-            },
+            updateFields,
             {upsert: true, returnDocument: 'after'},
         );
 

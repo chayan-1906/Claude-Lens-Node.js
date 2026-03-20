@@ -454,6 +454,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 + (usage.cache_creation_input_tokens ?? 0)
                 + (usage.cache_read_input_tokens ?? 0);
 
+            // Skip persisting when all tokens are 0 — rejected API call (e.g. "Prompt is too long")
+            // would overwrite valid previous context data with zeros
+            if (totalInput === 0) return;
+
             const modelKey: string | undefined = modelUsage ? Object.keys(modelUsage)[0] : undefined;
             const contextWindow: number | undefined = modelKey ? modelUsage?.[modelKey]?.contextWindow : undefined;
 
@@ -467,7 +471,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     {sessionId: activeSessionId},
                     {$set: update},
                 );
-                console.log(`WebSocket: Persisted context — tokens: ${totalInput}, contextWindow: ${contextWindow ?? 'unchanged'}`.cyan);
+                console.log(`WebSocket: Persisted context — sessionId: ${activeSessionId}, tokens: ${totalInput}, contextWindow: ${contextWindow ?? 'unchanged'}`.cyan);
             } catch (error: unknown) {
                 console.error(`WebSocket: Failed to persist context — ${error}`.red);
             }
@@ -595,7 +599,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
                     claudeProcess = spawnClaude(spawnMessage, webSocket, (resultEvent: Record<string, unknown>) => {
-                         scheduleSync(async (): Promise<void> => {
+                        // Persist context immediately for existing sessions (resume).
+                        // Also persist AFTER sync for new sessions (sync creates the session first).
+                        // Both calls are safe: zero-guard skips rejected results, $set is idempotent.
+                        persistResultContext(resultEvent);
+                        scheduleSync(async (): Promise<void> => {
                             await autoSyncWebUI();
                             await persistResultContext(resultEvent);
                         });
@@ -714,6 +722,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     console.log(`WebSocket: edit_session — spawning fresh session (cwd: ${spawnMsg.projectDir}, contextUserCount: ${contextUserCount})`.cyan);
                     claudeProcess = spawnClaude(spawnMsg, webSocket, (resultEvent: Record<string, unknown>) => {
+                        persistResultContext(resultEvent);
                         scheduleSync(async (): Promise<void> => {
                             await afterEditSync();
                             await persistResultContext(resultEvent);
