@@ -1,9 +1,26 @@
 import {Router} from "express";
-import {getSetupStatusController, setupController} from "../controllers/SetupController";
+import {
+    activateConfigurationController,
+    addConfigurationController,
+    deleteConfigurationController,
+    editConfigurationController,
+    getConfigProjectsController,
+    getConfigurationsController,
+    getSetupStatusController,
+    testConfigurationController,
+} from "../controllers/SetupController";
 
 const router: Router = Router();
 
 router.get('/status', getSetupStatusController);
-router.post('/', setupController);
+
+// Configuration CRUD routes
+router.get('/configurations', getConfigurationsController);
+router.post('/configurations', addConfigurationController);
+router.put('/configurations/:configId', editConfigurationController);
+router.delete('/configurations/:configId', deleteConfigurationController);
+router.post('/configurations/:configId/test', testConfigurationController);
+router.post('/configurations/:configId/activate', activateConfigurationController);
+router.get('/configurations/:configId/projects', getConfigProjectsController);
 
 export default router;

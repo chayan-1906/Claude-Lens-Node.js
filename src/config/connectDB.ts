@@ -1,7 +1,8 @@
 import "colors";
 import mongoose from "mongoose";
 import {MONGO_URI} from "./config";
-import {getLocalConfig, ILocalConfig} from "../utils/localConfig";
+import {getLocalConfig} from "../utils/localConfig";
+import {ILocalConfig, IMongoConfiguration} from "../types/setup";
 
 /** Cached MongoDB connection for reuse across requests */
 let cachedConnection: typeof mongoose | null = null;
@@ -17,8 +18,13 @@ let listenersRegistered: boolean = false;
  */
 function resolveMongoUri(): string | undefined {
     const localConfig: ILocalConfig | null = getLocalConfig();
-    if (localConfig?.MONGO_URI) {
-        return localConfig.MONGO_URI;
+    if (localConfig) {
+        const activeConfig: IMongoConfiguration | undefined = localConfig.configurations.find(
+            (config: IMongoConfiguration) => config.id === localConfig.activeConfigId,
+        );
+        if (activeConfig?.uri) {
+            return activeConfig.uri;
+        }
     }
 
     return MONGO_URI;

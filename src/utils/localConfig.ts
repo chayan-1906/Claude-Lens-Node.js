@@ -1,16 +1,19 @@
 import "colors";
 import fs from "fs";
 import path from "path";
+import {ILocalConfig} from "../types/setup";
 
 // --- Constants ---
 
 const CONFIG_DIR: string = path.join(process.env.HOME || '~', '.claude-lens');
 const CONFIG_FILE: string = path.join(CONFIG_DIR, 'config.json');
 
-// --- Types ---
+// --- Helpers ---
 
-interface ILocalConfig {
-    MONGO_URI: string;
+/** Generate a random hex color (e.g. "#4A90D9") */
+function generateRandomColor(): string {
+    const hex: string = Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
+    return `#${hex}`;
 }
 
 // --- Functions ---
@@ -27,7 +30,9 @@ function getLocalConfig(): ILocalConfig | null {
 
     const raw: string = fs.readFileSync(CONFIG_FILE, 'utf-8');
     console.debug('DEBUG: Local config loaded'.cyan, {path: CONFIG_FILE});
-    return JSON.parse(raw) as ILocalConfig;
+    const parsed: unknown = JSON.parse(raw);
+
+    return parsed as ILocalConfig;
 }
 
 /**
@@ -44,5 +49,4 @@ function saveLocalConfig(config: ILocalConfig): void {
     console.debug('DEBUG: Local config saved'.cyan, {path: CONFIG_FILE});
 }
 
-export {getLocalConfig, saveLocalConfig};
-export type {ILocalConfig};
+export {getLocalConfig, saveLocalConfig, generateRandomColor};
