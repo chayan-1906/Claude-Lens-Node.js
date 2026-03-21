@@ -517,11 +517,13 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
          *  fixed delay with JSONL file-size polling (check every 500ms until
          *  size stabilizes, then sync). Requires passing the JSONL path here.
          */
-        const scheduleSync = (fn: () => void): void => {
+        const scheduleSync = (fn: () => void | Promise<void>): void => {
             if (syncTimer) clearTimeout(syncTimer);
             syncTimer = setTimeout(() => {
                 syncTimer = null;
-                fn();
+                Promise.resolve(fn()).catch((error: unknown) => {
+                    console.error(`WebSocket: scheduleSync callback failed — ${error}`.red);
+                });
             }, 3000);
         }
 
@@ -529,13 +531,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
          * Cancel any pending scheduled sync and run the given callback immediately.
          * Used on process_exit where JSONL writes are guaranteed complete.
          */
-        const flushSync = (fn: () => void): void => {
+        const flushSync = (fn: () => void | Promise<void>): void => {
             if (syncTimer) {
                 console.debug('DEBUG: Clearing pending sync timer — process_exit takes priority'.cyan);
                 clearTimeout(syncTimer);
                 syncTimer = null;
             }
-            fn();
+            Promise.resolve(fn()).catch((error: unknown) => {
+                console.error(`WebSocket: flushSync callback failed — ${error}`.red);
+            });
         }
 
         /**
@@ -591,10 +595,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         const autoSyncWebUI = async (): Promise<void> => {
             await autoSync();
             if (activeSessionId) {
-                await SessionModel.updateOne(
-                    {sessionId: activeSessionId},
-                    {$set: {source: ESessionSource.WEBUI}},
-                );
+                try {
+                    await SessionModel.updateOne(
+                        {sessionId: activeSessionId},
+                        {$set: {source: ESessionSource.WEBUI}},
+                    );
+                } catch (error: unknown) {
+                    console.error(`WebSocket: Failed to set session source to WEBUI — ${error}`.red);
+                }
             }
         }
 
