@@ -412,16 +412,19 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         }
 
         /**
-         * Schedule a sync callback with 1500ms delay (debounced).
+         * Schedule a sync callback with 3000ms delay (debounced).
          * Claude emits the result event before finishing JSONL writes,
          * so the delay gives it time to flush. Cancels any pending timer.
+         * TODO: If 3s is still insufficient for large sessions, replace the
+         *  fixed delay with JSONL file-size polling (check every 500ms until
+         *  size stabilizes, then sync). Requires passing the JSONL path here.
          */
         const scheduleSync = (fn: () => void): void => {
             if (syncTimer) clearTimeout(syncTimer);
             syncTimer = setTimeout(() => {
                 syncTimer = null;
                 fn();
-            }, 1500);
+            }, 3000);
         }
 
         /**
