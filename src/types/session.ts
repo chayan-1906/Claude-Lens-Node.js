@@ -25,6 +25,11 @@ export interface IGetSessionResponse {
     error?: string;
 }
 
+export interface IUpdateSessionResponse {
+    session?: ISession;
+    error?: string;
+}
+
 export interface IDeleteSessionResponse {
     deletedSessions?: number;
     deletedTasks?: number;
@@ -45,6 +50,12 @@ export interface IGetAllSessionsParams {
 
 export interface IGetSessionParams {
     sessionId?: string;
+}
+
+export interface IUpdateSessionParams {
+    sessionId?: string;
+    title?: string;
+    description?: string;
 }
 
 export interface IDeleteSessionParams {

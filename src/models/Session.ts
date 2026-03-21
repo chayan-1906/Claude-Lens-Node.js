@@ -18,6 +18,7 @@ export interface ISession extends Document {
     rawProjectDir: string;          // original cwd as-is (e.g. /Users/padmanabhadas/my-project) — used for JSONL reconstruction
     gitBranch?: string;             // gitBranch from JSONL envelope
     slug?: string;                  // human-readable session name e.g. "golden-toasting-penguin"
+    description?: string;           // optional user-provided description for the session
     source: ESessionSource;
     contextTokensUsed?: number;     // total input tokens from the latest result event
     contextWindowSize?: number;     // max context window for the model (e.g. 200000)
@@ -59,6 +60,10 @@ const SessionSchema = new Schema<ISession>({
     },
     slug: {
         type: String,
+    },
+    description: {
+        type: String,
+        trim: true,
     },
     source: {
         type: String,

@@ -7,7 +7,7 @@ import MessageModel from "../models/Message";
 import {ContentBlock} from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse} from "../types/session";
+import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse, IUpdateSessionParams, IUpdateSessionResponse} from "../types/session";
 
 const CLAUDE_PROJECTS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'projects');
 
@@ -24,7 +24,7 @@ class SessionService {
         const skip: number = (page - 1) * limit;
 
         const [sessions, total]: [ISession[], number] = await Promise.all([
-            SessionModel.find(filter, {sessionId: 1, title: 1, aiModel: 1, projectDir: 1, source: 1, parentSessionId: 1, createdAt: 1, updatedAt: 1})
+            SessionModel.find(filter, {sessionId: 1, title: 1, description: 1, aiModel: 1, projectDir: 1, source: 1, parentSessionId: 1, createdAt: 1, updatedAt: 1})
                 .sort({updatedAt: -1})
                 .skip(skip)
                 .limit(limit),
@@ -62,6 +62,46 @@ class SessionService {
         console.log('Database: Session fetched'.cyan, {sessionId, messages: messages.length, contextTokensUsed: session.contextTokensUsed, contextWindowSize: session.contextWindowSize});
 
         return {session, messages};
+    }
+
+    static async updateSession({sessionId, title, description}: IUpdateSessionParams): Promise<IUpdateSessionResponse> {
+        console.log('Service: SessionService.updateSession called'.cyan.italic, {sessionId});
+
+        if (!sessionId) {
+            console.debug('DEBUG: Missing sessionId, returning error'.cyan);
+            return {error: generateInvalidCode('sessionId')};
+        }
+
+        const session: ISession | null = await SessionModel.findOne({sessionId});
+        if (!session) {
+            console.debug('DEBUG: Session not found'.cyan, {sessionId});
+            return {error: generateNotFoundCode('session')};
+        }
+
+        if (title !== undefined) {
+            if (!title.trim()) {
+                console.debug('DEBUG: Empty title provided, returning error'.cyan);
+                return {error: generateInvalidCode('title')};
+            }
+            if (title.trim().length > 100) {
+                console.debug('DEBUG: Title exceeds 100 characters, returning error'.cyan);
+                return {error: generateInvalidCode('title')};
+            }
+            session.title = title.trim();
+        }
+
+        if (description !== undefined) {
+            if (description.length > 500) {
+                console.debug('DEBUG: Description exceeds 500 characters, returning error'.cyan);
+                return {error: generateInvalidCode('description')};
+            }
+            session.description = description.trim();
+        }
+
+        await session.save();
+        console.log('Database: Session updated'.cyan, {sessionId, title: session.title, description: session.description});
+
+        return {session};
     }
 
     static async deleteSession({sessionId}: IDeleteSessionParams): Promise<IDeleteSessionResponse> {

@@ -3,8 +3,8 @@ import {Request, Response} from "express";
 import {ApiResponse} from "../utils/ApiResponse";
 import {ESessionSource} from "../models/Session";
 import SessionService from "../services/SessionService";
-import {IDeleteSessionParams, IGetSessionParams, IStubMessagesParams} from "../types/session";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+import {IDeleteSessionParams, IGetSessionParams, IStubMessagesParams, IUpdateSessionParams} from "../types/session";
 
 const VALID_SOURCES: string[] = Object.values(ESessionSource);
 
@@ -92,6 +92,57 @@ const getSessionController = async (req: Request, res: Response) => {
         res.status(500).send(new ApiResponse({
             success: false,
             errorMsg: error.message || 'Something went wrong while retrieving the session!',
+        }));
+    }
+}
+
+const updateSessionController = async (req: Request, res: Response) => {
+    console.info('Controller: updateSessionController started'.bgBlue.white.bold);
+
+    try {
+        const {sessionId}: Partial<IUpdateSessionParams> = req.params;
+        const {title, description}: Partial<IUpdateSessionParams> = req.body;
+        console.debug('DEBUG: Received params'.cyan, {sessionId, title, description});
+
+        const {session, error} = await SessionService.updateSession({sessionId, title, description});
+        if (error || !session) {
+            console.warn('WARN: SessionService.updateSession returned error'.yellow.bold, {error, sessionId});
+            let errorMsg: string = 'Failed to update session!';
+            let statusCode: number = 500;
+
+            if (error === generateInvalidCode('sessionId')) {
+                statusCode = 400;
+                errorMsg = `Invalid sessionId: ${sessionId}!`;
+            } else if (error === generateInvalidCode('title')) {
+                statusCode = 400;
+                errorMsg = 'Title must be non-empty and at most 100 characters!';
+            } else if (error === generateInvalidCode('description')) {
+                statusCode = 400;
+                errorMsg = 'Description must be at most 500 characters!';
+            } else if (error === generateNotFoundCode('session')) {
+                statusCode = 404;
+                errorMsg = `No session found with sessionId: ${sessionId}!`;
+            }
+
+            res.status(statusCode).send(new ApiResponse({
+                success: false,
+                errorCode: error,
+                errorMsg,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: Session updated'.bgGreen.bold, {sessionId});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Session has been updated!',
+            session,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: updateSessionController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while updating the session!',
         }));
     }
 }
@@ -190,4 +241,4 @@ const stubMessagesController = async (req: Request, res: Response) => {
     }
 }
 
-export {getAllSessionsController, getSessionController, deleteSessionController, stubMessagesController};
+export {getAllSessionsController, getSessionController, deleteSessionController, updateSessionController, stubMessagesController};
