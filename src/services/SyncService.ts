@@ -205,6 +205,30 @@ class SyncService {
             await MessageModel.insertMany(newMessages, {ordered: false});
         }
 
+        // Backfill parentUuid for messages written by direct-write (live WebSocket sessions).
+        // Direct-write saves messages without the correct parentUuid because stream-json events
+        // don't include it. The JSONL file has the authoritative parentUuid values.
+        // bulkWrite with updateOne is efficient — only touches messages that need updating.
+        if (existingUuids.size > 0) {
+            const backfillOps = parsedFile.messages
+                .filter((parsedMessage: IParsedMessage) =>
+                    existingUuids.has(parsedMessage.uuid) && parsedMessage.parentUuid,
+                )
+                .map((parsedMessage: IParsedMessage) => ({
+                    updateOne: {
+                        filter: {uuid: parsedMessage.uuid, $or: [{parentUuid: {$exists: false}}, {parentUuid: null}]},
+                        update: {$set: {parentUuid: parsedMessage.parentUuid}},
+                    },
+                }));
+
+            if (backfillOps.length > 0) {
+                const backfillResult = await MessageModel.bulkWrite(backfillOps);
+                if (backfillResult.modifiedCount > 0) {
+                    console.log(`SyncService: [backfill] Updated parentUuid for ${backfillResult.modifiedCount} direct-write messages (session: ${parsedFile.sessionId})`.cyan);
+                }
+            }
+        }
+
         return newMessages.length;
     }
 

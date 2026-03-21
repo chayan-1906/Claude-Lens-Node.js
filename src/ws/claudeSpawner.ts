@@ -101,9 +101,12 @@ function sendMessage(claudeProcess: ChildProcess, text: string): void {
  * Receives the parsed result event so the caller can extract contextWindow/usage data.
  * onEvent is an optional hook called for every parsed stdout event before WS forwarding.
  * contextNdjson is optional prior-conversation context piped to stdin before the first user message.
+ * onMessage is an optional hook called for every complete user/assistant event — used
+ * for direct MongoDB writes during live sessions (bypasses JSONL sync race condition).
+ * Only fires for complete assistant events (stop_reason !== null) and all user events.
  * Returns the spawned ChildProcess so the caller can manage its lifecycle.
  */
-function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: (resultEvent: Record<string, unknown>) => void, onEvent?: (event: Record<string, unknown>) => void, contextNdjson?: string, contextUserCount?: number): ChildProcess {
+function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: (resultEvent: Record<string, unknown>) => void, onEvent?: (event: Record<string, unknown>) => void, contextNdjson?: string, contextUserCount?: number, onMessage?: (event: Record<string, unknown>) => void): ChildProcess {
     const args: string[] = buildArgs(message);
     console.log(`WebSocket: Spawning claude ${args.join(' ')}`.cyan);
 
@@ -132,6 +135,17 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     // Track the last assistant event's per-call usage for accurate context calculation.
     // result.usage is cumulative across all turns; this holds the LAST call's actual context.
     let lastAssistantUsage: Record<string, unknown> | null = null;
+    // Buffer the latest assistant event for direct-write. With --include-partial-messages,
+    // assistant events fire repeatedly with stop_reason: null (each partial is a superset of
+    // the previous). We overwrite the buffer on each partial and flush (write to MongoDB) only
+    // when a result or user event signals the assistant turn is complete.
+    let bufferedAssistantEvent: Record<string, unknown> | null = null;
+    const flushBufferedAssistant = (): void => {
+        if (bufferedAssistantEvent && onMessage) {
+            onMessage(bufferedAssistantEvent);
+            bufferedAssistantEvent = null;
+        }
+    };
 
     claudeProcess.stdout!.on('data', (chunk: Buffer) => {
         buffer += chunk.toString();
@@ -211,11 +225,29 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     }
                 }
 
+                // Direct-write hook: buffer assistant events, flush on turn boundary.
+                // With --include-partial-messages, assistant events arrive repeatedly with
+                // stop_reason: null. Each partial is a superset of the previous — we keep
+                // overwriting the buffer and only flush (call onMessage) when:
+                //   • A user event arrives (tool_result = assistant turn ended)
+                //   • A result event arrives (session turn ended)
+                // User events (tool_result) are always complete — written directly.
+                if (onMessage) {
+                    if (event.type === 'assistant') {
+                        bufferedAssistantEvent = event;
+                    } else if (event.type === 'user') {
+                        flushBufferedAssistant();
+                        onMessage(event);
+                    }
+                }
+
                 if (onEvent) onEvent(event);
                 if (webSocket.readyState === WebSocket.OPEN) {
                     webSocket.send(JSON.stringify(event));
                 }
                 if (event.type === 'result') {
+                    // Flush any buffered assistant event before processing result
+                    flushBufferedAssistant();
                     // Attach last assistant's per-call usage so persistResultContext can use
                     // it for accurate context (result.usage is cumulative across all turns).
                     if (lastAssistantUsage) {

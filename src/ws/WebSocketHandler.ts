@@ -4,11 +4,12 @@ import path from "path";
 import {ChildProcess} from "child_process";
 import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
+import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
-import {IMessage} from "../models/Message";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
+import MessageModel, {IMessage} from "../models/Message";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
@@ -403,11 +404,108 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         let syncTimer: ReturnType<typeof setTimeout> | null = null;
         let activeSessionId: string | null = null;
 
-        /** Register session → WS mapping when system event provides the session_id */
+        // --- Direct-write state: write messages to MongoDB as they stream ---
+        let directWriteSessionOid: Types.ObjectId | null = null;
+        let lastWrittenUuid: string | null = null;
+
+        /** Register session → WS mapping when system event provides the session_id.
+         *  Also triggers direct-write session upsert so messages can be saved immediately. */
         const onSystemEvent = (event: Record<string, unknown>): void => {
             if (event.type === 'system' && event.session_id) {
                 activeSessionId = event.session_id as string;
                 registerSession(activeSessionId, webSocket);
+                upsertSessionOnInit(event);
+            }
+        }
+
+        /**
+         * Upsert the Session document in MongoDB when the system event arrives.
+         * This ensures the Session exists before any message direct-writes,
+         * so messages have a valid sessionInternalId reference.
+         * Called from onSystemEvent-like hooks passed to spawnClaude.
+         */
+        const upsertSessionOnInit = async (event: Record<string, unknown>): Promise<void> => {
+            if (event.type !== 'system' || !event.session_id) return;
+            const sessionId: string = event.session_id as string;
+            const cwd: string = (event.cwd as string) || '';
+            const model: string = (event.model as string) || '';
+            const projectDir: string = cwd.replace(NON_ALPHANUMERIC_REGEX, '-');
+
+            try {
+                const session = await SessionModel.findOneAndUpdate(
+                    {sessionId},
+                    {
+                        $setOnInsert: {title: '(live session)', source: ESessionSource.WEBUI},
+                        $set: {projectDir, rawProjectDir: cwd, aiModel: model},
+                    },
+                    {upsert: true, returnDocument: 'after'},
+                );
+                directWriteSessionOid = session!._id as Types.ObjectId;
+                lastWrittenUuid = null;
+                console.log(`WebSocket: [direct-write] Session upserted — sessionId: ${sessionId}, _id: ${directWriteSessionOid}`.green);
+            } catch (error: unknown) {
+                console.error(`WebSocket: [direct-write] Failed to upsert session — ${error}`.red);
+            }
+        }
+
+        /**
+         * Write a single user/assistant message to MongoDB in real-time.
+         * Called by claudeSpawner's onMessage hook for every complete event.
+         * Uses the uuid as dedup key — safe to call even if JSONL sync later
+         * tries to insert the same message (unique index prevents duplicates).
+         * parentUuid is NOT available in stream-json events, so we chain messages
+         * using lastWrittenUuid. The JSONL sync on process_exit backfills the
+         * correct parentUuid from the JSONL file (see SyncService.syncFile).
+         */
+        const directWriteMessage = async (event: Record<string, unknown>): Promise<void> => {
+            if (!directWriteSessionOid) return;
+
+            const uuid: string | undefined = event.uuid as string | undefined;
+            if (!uuid) {
+                console.warn('WebSocket: [direct-write] Skipping event without uuid'.yellow);
+                return;
+            }
+
+            const role: string = event.type as string; // 'assistant' or 'user'
+            const msgObj = event.message as Record<string, unknown> | undefined;
+            if (!msgObj) return;
+
+            const content = msgObj.content as string | Record<string, unknown>[];
+            const aiModel: string | undefined = role === 'assistant' ? (msgObj.model as string | undefined) : undefined;
+
+            // Extract token usage from assistant events
+            let tokenUsage: Record<string, number> | undefined;
+            if (role === 'assistant' && msgObj.usage) {
+                const usage = msgObj.usage as Record<string, number>;
+                tokenUsage = {
+                    inputTokens: usage.input_tokens ?? 0,
+                    outputTokens: usage.output_tokens ?? 0,
+                    cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+                    cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+                };
+            }
+
+            try {
+                await MessageModel.create({
+                    uuid,
+                    parentUuid: lastWrittenUuid ?? undefined,
+                    sessionInternalId: directWriteSessionOid,
+                    role,
+                    content,
+                    aiModel,
+                    timestamp: new Date(),
+                    tokenUsage,
+                });
+                lastWrittenUuid = uuid;
+                console.log(`WebSocket: [direct-write] Saved ${role} message (uuid: ${uuid})`.green);
+            } catch (error: unknown) {
+                // E11000 duplicate key error = message already exists (e.g. from a prior sync) — safe to ignore
+                if (error instanceof Error && error.message.includes('E11000')) {
+                    console.log(`WebSocket: [direct-write] Skipped duplicate ${role} message (uuid: ${uuid})`.gray);
+                    lastWrittenUuid = uuid;
+                } else {
+                    console.error(`WebSocket: [direct-write] Failed to save ${role} message — ${error}`.red);
+                }
             }
         }
 
@@ -619,7 +717,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             await autoSyncWebUI();
                             await persistResultContext(resultEvent);
                         });
-                    }, onSystemEvent);
+                    }, onSystemEvent, undefined, undefined, directWriteMessage);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
@@ -676,12 +774,13 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     let newSessionId: string | null = null;
                     let parentSessionIdSet: boolean = false;
 
-                    // Capture new session_id from the system event + register for tool approval
+                    // Capture new session_id from the system event + register for tool approval + upsert session for direct-write
                     const captureSessionId = (event: Record<string, unknown>): void => {
                         if (event.type === 'system') {
                             newSessionId = event.session_id as string;
                             activeSessionId = newSessionId;
                             registerSession(activeSessionId, webSocket);
+                            upsertSessionOnInit(event);
                             console.log(`WebSocket: edit_session — new session_id captured: ${newSessionId}`.cyan);
                         }
                     };
@@ -739,7 +838,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             await afterEditSync();
                             await persistResultContext(resultEvent);
                         });
-                    }, captureSessionId, contextNdjson, contextUserCount);
+                    }, captureSessionId, contextNdjson, contextUserCount, directWriteMessage);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: edit_session claude process exited with code ${code}`.cyan);
