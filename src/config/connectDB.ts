@@ -1,6 +1,5 @@
 import "colors";
 import mongoose from "mongoose";
-import {MONGO_URI} from "./config";
 import {getLocalConfig} from "../utils/localConfig";
 import {ILocalConfig, IMongoConfiguration} from "../types/setup";
 
@@ -23,11 +22,12 @@ function resolveMongoUri(): string | undefined {
             (config: IMongoConfiguration) => config.id === localConfig.activeConfigId,
         );
         if (activeConfig?.uri) {
+            console.log('Database: Resolved URI'.cyan, activeConfig.uri);
             return activeConfig.uri;
         }
     }
 
-    return MONGO_URI;
+    // return MONGO_URI;
 }
 
 /**
@@ -43,6 +43,8 @@ async function connectDB(uri?: string): Promise<typeof mongoose | null> {
         console.warn('Config Warning: No MONGO_URI configured — running in setup mode'.yellow.bold);
         return null;
     }
+
+    console.log('Database: Effective URI'.cyan, effectiveUri);
 
     try {
         // If an explicit URI is provided and we already have a connection, close it first

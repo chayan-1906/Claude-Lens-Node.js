@@ -10,18 +10,18 @@ export enum ESessionSource {
  * One document per ~/.claude/projects/{project}/{sessionId}.jsonl file
  */
 export interface ISession extends Document {
-    sessionInternalId: string;   // derived from _id via toJSON (not stored)
-    sessionId: string;        // JSONL filename UUID — unique key for upsert
-    title: string;            // first user message, truncated
-    aiModel?: string;         // primary model used (from first assistant message)
-    projectDir: string;       // hashed cwd (e.g. -Users-padmanabhadas-my-project) — used to locate ~/.claude/projects/ subdir
-    rawProjectDir: string;    // original cwd as-is (e.g. /Users/padmanabhadas/my-project) — used for JSONL reconstruction
-    gitBranch?: string;       // gitBranch from JSONL envelope
-    slug?: string;            // human-readable session name e.g. "golden-toasting-penguin"
+    sessionInternalId: string;      // derived from _id via toJSON (not stored)
+    sessionId: string;              // JSONL filename UUID — unique key for upsert
+    title: string;                  // first user message, truncated
+    aiModel?: string;               // primary model used (from first assistant message)
+    projectDir: string;             // hashed cwd (e.g. -Users-padmanabhadas-my-project) — used to locate ~/.claude/projects/ subdir
+    rawProjectDir: string;          // original cwd as-is (e.g. /Users/padmanabhadas/my-project) — used for JSONL reconstruction
+    gitBranch?: string;             // gitBranch from JSONL envelope
+    slug?: string;                  // human-readable session name e.g. "golden-toasting-penguin"
     source: ESessionSource;
-    contextTokensUsed?: number;   // total input tokens from the latest result event
-    contextWindowSize?: number;   // max context window for the model (e.g. 200000)
-    parentSessionId?: string;     // sessionId of the parent session this was forked/edited from
+    contextTokensUsed?: number;     // total input tokens from the latest result event
+    contextWindowSize?: number;     // max context window for the model (e.g. 200000)
+    parentSessionId?: string;       // sessionId of the parent session this was forked/edited from
     createdAt: Date;
     updatedAt: Date;
 }
