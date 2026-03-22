@@ -156,14 +156,20 @@ class SyncService {
      * Upserts session, incrementally inserts only new messages
      */
     private static async syncFile(parsedFile: IParsedFile): Promise<number> {
+        // Check if the session already has a user-renamed title — don't overwrite it
+        const existingSession = await SessionModel.findOne({sessionId: parsedFile.sessionId}, {titleRenamed: 1}).lean();
+
         const updateFields: Record<string, unknown> = {
-            title: parsedFile.title,
             aiModel: parsedFile.aiModel,
             projectDir: parsedFile.projectDir,
             rawProjectDir: parsedFile.rawProjectDir,
             gitBranch: parsedFile.gitBranch,
             slug: parsedFile.slug,
         };
+        // Only overwrite title if the user hasn't explicitly renamed it
+        if (!existingSession?.titleRenamed) {
+            updateFields.title = parsedFile.title;
+        }
         // Only set contextTokensUsed when > 0 — avoids overwriting valid values
         // with zeros from rejected API calls (e.g. "Prompt is too long")
         if (parsedFile.contextTokensUsed && parsedFile.contextTokensUsed > 0) {

@@ -88,6 +88,7 @@ class SessionService {
                 return {error: generateInvalidCode('title')};
             }
             session.title = title.trim();
+            session.titleRenamed = true;
         }
 
         if (description !== undefined) {

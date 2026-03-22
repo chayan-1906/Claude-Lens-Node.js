@@ -19,6 +19,7 @@ export interface ISession extends Document {
     gitBranch?: string;             // gitBranch from JSONL envelope
     slug?: string;                  // human-readable session name e.g. "golden-toasting-penguin"
     description?: string;           // optional user-provided description for the session
+    titleRenamed: boolean;           // true when user explicitly renamed — prevents JSONL sync from overwriting
     source: ESessionSource;
     contextTokensUsed?: number;     // total input tokens from the latest result event
     contextWindowSize?: number;     // max context window for the model (e.g. 200000)
@@ -64,6 +65,10 @@ const SessionSchema = new Schema<ISession>({
     description: {
         type: String,
         trim: true,
+    },
+    titleRenamed: {
+        type: Boolean,
+        default: false,
     },
     source: {
         type: String,
