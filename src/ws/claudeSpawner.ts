@@ -157,13 +157,6 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     let turnMsgId: string | null = null;
     let turnEvents: Map<string, Record<string, unknown>> = new Map();
     let turnUuidOrder: string[] = [];
-    // Sub-agent filter: track pending Agent tool_use IDs to suppress sub-agent
-    // events from direct-write. The CLI streams sub-agent conversation events
-    // (user prompt, assistant tool calls, tool results) inline with the main
-    // conversation — saving these to MongoDB creates phantom "user messages"
-    // that the user never typed. We skip them here; JSONL sync also ignores
-    // sub-agent files (findJsonlFiles skips subdirectories).
-    const pendingAgentToolIds: Set<string> = new Set();
     const flushAssistantTurn = (): void => {
         if (turnUuidOrder.length === 0 || !onMessage) {
             turnMsgId = null;
@@ -188,15 +181,6 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
             message: {...lastMsg, content: mergedContent},
         };
         onMessage(mergedEvent);
-        // Detect Agent tool_use blocks in the flushed turn — their sub-agent
-        // events will follow in the stream and must be suppressed from direct-write.
-        for (const block of mergedContent) {
-            if (block.type === 'tool_use' && block.name === 'Agent') {
-                const toolId: string = block.id as string;
-                pendingAgentToolIds.add(toolId);
-                console.log(`WebSocket: [sub-agent] Agent tool_use detected (id: ${toolId}) — suppressing sub-agent events from direct-write`.cyan);
-            }
-        }
         turnMsgId = null;
         turnEvents = new Map();
         turnUuidOrder = [];
@@ -285,58 +269,24 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                 // content per uuid (last event per uuid = complete content for that block).
                 // On flush (user/result event), merges all content blocks into ONE message
                 // with the LAST uuid — matching the JSONL parser's merge behavior exactly.
-                //
-                // Sub-agent suppression: when the main agent calls the Agent tool, all
-                // subsequent events until the matching tool_result belong to the sub-agent
-                // and must NOT be saved to MongoDB. WebSocket forwarding is unaffected —
-                // the user still sees sub-agent progress live.
                 if (onMessage) {
-                    const isSubAgentActive: boolean = pendingAgentToolIds.size > 0;
-
                     if (event.type === 'assistant') {
-                        if (!isSubAgentActive) {
-                            const msgObj = event.message as Record<string, unknown>;
-                            const msgId: string = msgObj.id as string;
-                            const eventUuid: string = event.uuid as string;
-                            // Different message.id = different API response = flush previous turn
-                            if (msgId && msgId !== turnMsgId) {
-                                flushAssistantTurn();
-                                turnMsgId = msgId;
-                            }
-                            // Track unique uuids in order; update with latest event per uuid
-                            if (!turnEvents.has(eventUuid)) {
-                                turnUuidOrder.push(eventUuid);
-                            }
-                            turnEvents.set(eventUuid, event);
-                        }
-                    } else if (event.type === 'user') {
-                        if (isSubAgentActive) {
-                            // Check if this is the Agent's tool_result (exits sub-agent mode)
-                            const msgObj = event.message as Record<string, unknown> | undefined;
-                            const content = msgObj?.content as Array<Record<string, unknown>> | undefined;
-                            let matchedAgentId: string | null = null;
-                            if (Array.isArray(content)) {
-                                for (const block of content) {
-                                    if (block.type === 'tool_result' && pendingAgentToolIds.has(block.tool_use_id as string)) {
-                                        matchedAgentId = block.tool_use_id as string;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (matchedAgentId) {
-                                // Main agent's tool_result for Agent — save and exit sub-agent mode
-                                pendingAgentToolIds.delete(matchedAgentId);
-                                console.log(`WebSocket: [sub-agent] Agent tool_result received (id: ${matchedAgentId}) — resuming direct-write (remaining: ${pendingAgentToolIds.size})`.cyan);
-                                flushAssistantTurn();
-                                onMessage(event);
-                            } else {
-                                // Sub-agent user event (prompt or internal tool result) — skip
-                                console.debug('WebSocket: [sub-agent] Skipping sub-agent user event from direct-write'.gray);
-                            }
-                        } else {
+                        const msgObj = event.message as Record<string, unknown>;
+                        const msgId: string = msgObj.id as string;
+                        const eventUuid: string = event.uuid as string;
+                        // Different message.id = different API response = flush previous turn
+                        if (msgId && msgId !== turnMsgId) {
                             flushAssistantTurn();
-                            onMessage(event);
+                            turnMsgId = msgId;
                         }
+                        // Track unique uuids in order; update with latest event per uuid
+                        if (!turnEvents.has(eventUuid)) {
+                            turnUuidOrder.push(eventUuid);
+                        }
+                        turnEvents.set(eventUuid, event);
+                    } else if (event.type === 'user') {
+                        flushAssistantTurn();
+                        onMessage(event);
                     }
                 }
 
