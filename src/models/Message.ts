@@ -45,6 +45,7 @@ export interface IMessage extends Document {
     role: EMessageRole;
     content: string | ContentBlock[];
     aiModel?: string;                       // present only on assistant messages
+    effortLevel?: string;                   // effort level used at spawn time (low/medium/high/max)
     timestamp: Date;                        // original timestamp from JSONL envelope
     tokenUsage?: {
         input: number;
@@ -85,6 +86,9 @@ const MessageSchema = new Schema<IMessage>({
         required: true,
     },
     aiModel: {
+        type: String,
+    },
+    effortLevel: {
         type: String,
     },
     timestamp: {

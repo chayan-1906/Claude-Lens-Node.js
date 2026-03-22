@@ -451,6 +451,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         let claudeProcess: ChildProcess | null = null;
         let syncTimer: ReturnType<typeof setTimeout> | null = null;
         let activeSessionId: string | null = null;
+        let activeEffortLevel: string | null = null;
 
         // --- Direct-write state: write messages to MongoDB as they stream ---
         let directWriteSessionOid: Types.ObjectId | null = null;
@@ -549,6 +550,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     role,
                     content,
                     aiModel,
+                    effortLevel: role === 'assistant' ? (activeEffortLevel ?? undefined) : undefined,
                     timestamp: new Date(),
                     tokenUsage,
                 });
@@ -776,6 +778,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         ? ({type: 'new_session', text: clientMessage.text, projectDir: clientMessage.newProjectDir} as INewSessionMessage)
                         : clientMessage;
 
+                    activeEffortLevel = spawnMessage.effort ?? null;
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
                     claudeProcess = spawnClaude(spawnMessage, webSocket, (resultEvent: Record<string, unknown>) => {
                         // Persist context immediately for existing sessions (resume).
@@ -982,6 +985,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     claudeProcess = null;
 
                     // Re-spawn with --resume --model (no initial message — user sends via send_message)
+                    activeEffortLevel = switchMsg.effort ?? null;
                     const resumeMsg: IResumeSessionMessage = {
                         type: 'resume_session',
                         sessionId: activeSessionId,
