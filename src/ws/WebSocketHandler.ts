@@ -485,10 +485,18 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 };
             }
 
+            // Capture parentUuid and update lastWrittenUuid SYNCHRONOUSLY before
+            // the async MongoDB write. This prevents a race condition where two
+            // concurrent writes (flush assistant + user event) both read the same
+            // stale lastWrittenUuid, breaking the parentUuid chain and causing
+            // getActiveBranch to orphan messages.
+            const parentUuid: string | undefined = lastWrittenUuid ?? undefined;
+            lastWrittenUuid = uuid;
+
             try {
                 await MessageModel.create({
                     uuid,
-                    parentUuid: lastWrittenUuid ?? undefined,
+                    parentUuid,
                     sessionInternalId: directWriteSessionOid,
                     role,
                     content,
@@ -496,13 +504,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     timestamp: new Date(),
                     tokenUsage,
                 });
-                lastWrittenUuid = uuid;
                 console.log(`WebSocket: [direct-write] Saved ${role} message (uuid: ${uuid})`.green);
             } catch (error: unknown) {
                 // E11000 duplicate key error = message already exists (e.g. from a prior sync) — safe to ignore
                 if (error instanceof Error && error.message.includes('E11000')) {
                     console.log(`WebSocket: [direct-write] Skipped duplicate ${role} message (uuid: ${uuid})`.gray);
-                    lastWrittenUuid = uuid;
                 } else {
                     console.error(`WebSocket: [direct-write] Failed to save ${role} message — ${error}`.red);
                 }
@@ -591,7 +597,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             }
         }
 
-        /** Sync then label the active session as web-UI originated */
+        /** Sync then label the active session as web-UI originated.
+         *  After sync completes, sends a sync_complete event to the frontend
+         *  so it can refetch the session with the full data (including the
+         *  human-typed user message that only exists in the JSONL file). */
         const autoSyncWebUI = async (): Promise<void> => {
             await autoSync();
             if (activeSessionId) {
@@ -603,6 +612,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 } catch (error: unknown) {
                     console.error(`WebSocket: Failed to set session source to WEBUI — ${error}`.red);
                 }
+            }
+            if (webSocket.readyState === WebSocket.OPEN) {
+                webSocket.send(JSON.stringify({type: 'sync_complete', sessionId: activeSessionId}));
+                console.log('WebSocket: Sent sync_complete event to frontend'.green);
             }
         }
 

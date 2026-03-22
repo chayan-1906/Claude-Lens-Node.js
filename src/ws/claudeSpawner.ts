@@ -135,16 +135,44 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     // Track the last assistant event's per-call usage for accurate context calculation.
     // result.usage is cumulative across all turns; this holds the LAST call's actual context.
     let lastAssistantUsage: Record<string, unknown> | null = null;
-    // Buffer the latest assistant event for direct-write. With --include-partial-messages,
-    // assistant events fire repeatedly with stop_reason: null (each partial is a superset of
-    // the previous). We overwrite the buffer on each partial and flush (write to MongoDB) only
-    // when a result or user event signals the assistant turn is complete.
-    let bufferedAssistantEvent: Record<string, unknown> | null = null;
-    const flushBufferedAssistant = (): void => {
-        if (bufferedAssistantEvent && onMessage) {
-            onMessage(bufferedAssistantEvent);
-            bufferedAssistantEvent = null;
+    // Accumulate assistant events per API turn for direct-write.
+    // The CLI emits separate events per content block (thinking, text, tool_use),
+    // each with a different uuid but the same message.id. The JSONL parser merges
+    // these into a single message with concatenated content blocks and the LAST uuid.
+    // We replicate that merge here: accumulate all events for the same message.id,
+    // then flush ONE merged message when a user/result event signals the turn ended.
+    // Within the same uuid, --include-partial-messages causes cumulative updates —
+    // we keep the latest event per uuid (it's a superset of the previous).
+    let turnMsgId: string | null = null;
+    let turnEvents: Map<string, Record<string, unknown>> = new Map();
+    let turnUuidOrder: string[] = [];
+    const flushAssistantTurn = (): void => {
+        if (turnUuidOrder.length === 0 || !onMessage) {
+            turnMsgId = null;
+            return;
         }
+        // Merge content blocks from all uuids in order (matches JSONL parser behavior)
+        const mergedContent: Record<string, unknown>[] = [];
+        for (const uuid of turnUuidOrder) {
+            const evt: Record<string, unknown> = turnEvents.get(uuid)!;
+            const msg = evt.message as Record<string, unknown>;
+            const content = msg.content as Record<string, unknown>[];
+            if (Array.isArray(content)) {
+                mergedContent.push(...content);
+            }
+        }
+        // Use the LAST event as base (has latest uuid, model, usage — matches JSONL parser)
+        const lastUuid: string = turnUuidOrder[turnUuidOrder.length - 1];
+        const lastEvent: Record<string, unknown> = turnEvents.get(lastUuid)!;
+        const lastMsg = lastEvent.message as Record<string, unknown>;
+        const mergedEvent: Record<string, unknown> = {
+            ...lastEvent,
+            message: {...lastMsg, content: mergedContent},
+        };
+        onMessage(mergedEvent);
+        turnMsgId = null;
+        turnEvents = new Map();
+        turnUuidOrder = [];
     };
 
     claudeProcess.stdout!.on('data', (chunk: Buffer) => {
@@ -225,18 +253,28 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     }
                 }
 
-                // Direct-write hook: buffer assistant events, flush on turn boundary.
-                // With --include-partial-messages, assistant events arrive repeatedly with
-                // stop_reason: null. Each partial is a superset of the previous — we keep
-                // overwriting the buffer and only flush (call onMessage) when:
-                //   • A user event arrives (tool_result = assistant turn ended)
-                //   • A result event arrives (session turn ended)
-                // User events (tool_result) are always complete — written directly.
+                // Direct-write hook: accumulate assistant events per turn, flush merged.
+                // Groups by message.id (same API response). Within a turn, tracks
+                // content per uuid (last event per uuid = complete content for that block).
+                // On flush (user/result event), merges all content blocks into ONE message
+                // with the LAST uuid — matching the JSONL parser's merge behavior exactly.
                 if (onMessage) {
                     if (event.type === 'assistant') {
-                        bufferedAssistantEvent = event;
+                        const msgObj = event.message as Record<string, unknown>;
+                        const msgId: string = msgObj.id as string;
+                        const eventUuid: string = event.uuid as string;
+                        // Different message.id = different API response = flush previous turn
+                        if (msgId && msgId !== turnMsgId) {
+                            flushAssistantTurn();
+                            turnMsgId = msgId;
+                        }
+                        // Track unique uuids in order; update with latest event per uuid
+                        if (!turnEvents.has(eventUuid)) {
+                            turnUuidOrder.push(eventUuid);
+                        }
+                        turnEvents.set(eventUuid, event);
                     } else if (event.type === 'user') {
-                        flushBufferedAssistant();
+                        flushAssistantTurn();
                         onMessage(event);
                     }
                 }
@@ -246,8 +284,8 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                     webSocket.send(JSON.stringify(event));
                 }
                 if (event.type === 'result') {
-                    // Flush any buffered assistant event before processing result
-                    flushBufferedAssistant();
+                    // Flush accumulated assistant turn before processing result
+                    flushAssistantTurn();
                     // Attach last assistant's per-call usage so persistResultContext can use
                     // it for accurate context (result.usage is cumulative across all turns).
                     if (lastAssistantUsage) {
