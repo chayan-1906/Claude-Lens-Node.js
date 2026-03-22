@@ -139,8 +139,20 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
 
     fs.mkdirSync(sessionDir, {recursive: true});
 
+    // Normalize: Mongoose documents have schema-defined getters, not own enumerable
+    // properties. Spreading them ({...msg}) loses role, uuid, etc. Convert to plain
+    // objects up front so all downstream operations (filter, spread, merge) work safely.
+    const plain: IMessage[] = messages.map((m: IMessage) => ({
+        role: m.role,
+        uuid: m.uuid,
+        parentUuid: m.parentUuid,
+        content: m.content,
+        timestamp: m.timestamp,
+        aiModel: m.aiModel,
+    } as IMessage));
+
     // Step 1: Filter out messages with empty content (stripped thinking/tool blocks)
-    const filtered: IMessage[] = messages.filter((message: IMessage) => {
+    const filtered: IMessage[] = plain.filter((message: IMessage) => {
         const content = message.content;
         if (Array.isArray(content) && content.length === 0) {
             console.warn(`WebSocket: [RECONSTRUCT] Skipping ${message.role} message (uuid: ${message.uuid}) — empty content array`.yellow);
@@ -185,11 +197,47 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
         }
     }
 
+    // Step 3.5: Strip orphaned tool_use blocks from assistant messages — the mirror of Step 3.
+    // An assistant tool_use block without a matching tool_result in the next user message
+    // causes the Anthropic API to return 400 ("tool use concurrency issues").
+    const toolResultRefIds: Set<string> = new Set();
+    for (const message of cleaned) {
+        if (message.role === 'user' && Array.isArray(message.content)) {
+            for (const block of message.content as Record<string, unknown>[]) {
+                if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+                    toolResultRefIds.add(block.tool_use_id);
+                }
+            }
+        }
+    }
+
+    const repaired: IMessage[] = [];
+    for (const message of cleaned) {
+        if (message.role === 'assistant' && Array.isArray(message.content)) {
+            const blocks = (message.content as Record<string, unknown>[]).filter((block: Record<string, unknown>) => {
+                if (block.type === 'tool_use' && typeof block.id === 'string') {
+                    if (!toolResultRefIds.has(block.id)) {
+                        console.warn(`WebSocket: [RECONSTRUCT] Stripping orphaned tool_use (id: ${block.id}) from assistant message (uuid: ${message.uuid})`.yellow);
+                        return false;
+                    }
+                }
+                return true;
+            });
+            if (blocks.length === 0) {
+                console.warn(`WebSocket: [RECONSTRUCT] Removing assistant message (uuid: ${message.uuid}) — all content was orphaned tool_use`.yellow);
+                continue;
+            }
+            repaired.push({...message, content: blocks} as IMessage);
+        } else {
+            repaired.push(message);
+        }
+    }
+
     // Step 4: Merge consecutive same-role messages to maintain valid alternation.
     // Filtering empty-content messages can leave consecutive user or assistant entries
     // which the Anthropic API rejects with 400.
     const merged: IMessage[] = [];
-    for (const message of cleaned) {
+    for (const message of repaired) {
         const prev: IMessage | undefined = merged[merged.length - 1];
         if (prev && prev.role === message.role) {
             console.warn(`WebSocket: [RECONSTRUCT] Merging consecutive ${message.role} message (uuid: ${message.uuid}) into previous (uuid: ${prev.uuid})`.yellow);
@@ -206,7 +254,7 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
         }
     }
 
-    console.log(`WebSocket: [RECONSTRUCT] Pipeline: ${messages.length} raw → ${filtered.length} filtered → ${cleaned.length} cleaned → ${merged.length} merged`.cyan);
+    console.log(`WebSocket: [RECONSTRUCT] Pipeline: ${messages.length} raw → ${filtered.length} filtered → ${cleaned.length} cleaned → ${repaired.length} repaired → ${merged.length} merged`.cyan);
 
     const lines: string[] = merged
         .map((message: IMessage) => JSON.stringify({
