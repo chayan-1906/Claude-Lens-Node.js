@@ -14,7 +14,7 @@ import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {cleanupSession, registerSession, resolveApproval} from "./toolApprovalStore";
-import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, IToolApprovalResponseMessage} from "../types/ws";
+import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, ISwitchModelMessage, IToolApprovalResponseMessage} from "../types/ws";
 
 /**
  * Check if the local JSONL session file exists for the given projectDir + sessionId.
@@ -951,6 +951,72 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     killClaudeProcess(claudeProcess);
                     if (webSocket.readyState === WebSocket.OPEN) {
                         webSocket.send(JSON.stringify({type: 'session_stopped'}));
+                    }
+                    break;
+                }
+
+                case 'switch_model': {
+                    const switchMsg: ISwitchModelMessage = clientMessage as ISwitchModelMessage;
+
+                    if (!claudeProcess || !activeSessionId) {
+                        sendError(webSocket, 'No active session to switch model!');
+                        break;
+                    }
+
+                    if (!switchMsg.model) {
+                        sendError(webSocket, 'Model is required for switch_model!');
+                        break;
+                    }
+
+                    console.log(`WebSocket: Received switch_model — switching to ${switchMsg.model} (killing current process)`.yellow);
+
+                    // Fetch session to get projectDir for re-spawn cwd
+                    const {session: switchSession, error: switchError} = await SessionService.getSessionBySessionId(activeSessionId);
+                    if (switchError || !switchSession) {
+                        sendError(webSocket, `Failed to fetch session for model switch: ${switchError ?? 'session not found'}`);
+                        break;
+                    }
+
+                    // Kill existing process
+                    killClaudeProcess(claudeProcess);
+                    claudeProcess = null;
+
+                    // Re-spawn with --resume --model (no initial message — user sends via send_message)
+                    const resumeMsg: IResumeSessionMessage = {
+                        type: 'resume_session',
+                        sessionId: activeSessionId,
+                        text: '',
+                        projectDir: switchSession.rawProjectDir,
+                        model: switchMsg.model,
+                        effort: switchMsg.effort,
+                    };
+
+                    claudeProcess = spawnClaude(resumeMsg, webSocket, (resultEvent: Record<string, unknown>) => {
+                        persistResultContext(resultEvent);
+                        scheduleSync(async (): Promise<void> => {
+                            await autoSyncWebUI();
+                            await persistResultContext(resultEvent);
+                        });
+                    }, onSystemEvent, undefined, undefined, directWriteMessage);
+
+                    claudeProcess.on('exit', (code: number | null) => {
+                        console.log(`WebSocket: switch_model claude process exited with code ${code}`.cyan);
+                        if (webSocket.readyState === WebSocket.OPEN) {
+                            webSocket.send(JSON.stringify({type: 'process_exit', code}));
+                        }
+                        flushSync(autoSyncWebUI);
+                        claudeProcess = null;
+                    });
+
+                    claudeProcess.on('error', (error: Error) => {
+                        console.error(`WebSocket: switch_model claude process error — ${error.message}`.red);
+                        sendError(webSocket, `Failed to spawn claude after model switch: ${error.message}`);
+                        claudeProcess = null;
+                    });
+
+                    // Notify frontend that the model was switched
+                    if (webSocket.readyState === WebSocket.OPEN) {
+                        webSocket.send(JSON.stringify({type: 'model_switched', model: switchMsg.model}));
                     }
                     break;
                 }

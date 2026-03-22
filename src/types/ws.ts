@@ -4,6 +4,8 @@ export interface INewSessionMessage {
     type: 'new_session';
     text: string;
     projectDir?: string;
+    model?: string;
+    effort?: string;
 }
 
 export interface IResumeSessionMessage {
@@ -12,6 +14,8 @@ export interface IResumeSessionMessage {
     text: string;
     newProjectDir?: string;
     projectDir?: string;
+    model?: string;
+    effort?: string;
 }
 
 export interface ISendMessageMessage {
@@ -56,6 +60,13 @@ export interface IStopExecutionMessage {
     type: 'stop_execution';
 }
 
+/** Client → Server: switch the model mid-conversation (kill + re-spawn with --resume --model) */
+export interface ISwitchModelMessage {
+    type: 'switch_model';
+    model: string;
+    effort?: string;
+}
+
 /** Client → Server: user's decision on a pending tool approval */
 export interface IToolApprovalResponseMessage {
     type: 'tool_approval_response';
@@ -64,7 +75,7 @@ export interface IToolApprovalResponseMessage {
     reason?: string;
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage | IStopExecutionMessage | IToolApprovalResponseMessage;
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage | IStopExecutionMessage | ISwitchModelMessage | IToolApprovalResponseMessage;
 
 
 /** ------------- Server → Client messages ------------- */

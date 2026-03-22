@@ -29,6 +29,14 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         args.push('--resume', message.sessionId);
     }
 
+    if (message.model) {
+        args.push('--model', message.model);
+    }
+
+    if (message.effort) {
+        args.push('--effort', message.effort);
+    }
+
     console.debug('args:'.cyan, args);
     return args;
 }
@@ -122,8 +130,11 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
         claudeProcess.stdin!.write(contextNdjson);
     }
 
-    // Send the first user message as NDJSON — stdin stays open for follow-ups
-    sendMessage(claudeProcess, message.text);
+    // Send the first user message as NDJSON — stdin stays open for follow-ups.
+    // Skip when text is empty (e.g. switch_model: re-spawn without sending a message).
+    if (message.text && message.text.trim()) {
+        sendMessage(claudeProcess, message.text);
+    }
 
     // Line-buffered stdout → parse JSON lines → forward to WebSocket
     let buffer: string = '';
