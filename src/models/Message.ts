@@ -1,4 +1,5 @@
 import {Document, Model, model, Schema, Types} from "mongoose";
+import {IAttachmentMeta} from "../types/ws";
 
 // --- Content block types (assistant message content array) ---
 type ThinkingBlock = {
@@ -47,6 +48,7 @@ export interface IMessage extends Document {
     aiModel?: string;                       // present only on assistant messages
     effortLevel?: string;                   // effort level used at spawn time (low/medium/high/max)
     timestamp: Date;                        // original timestamp from JSONL envelope
+    attachments?: IAttachmentMeta[];        // R2 metadata for user messages with file attachments
     tokenUsage?: {
         input: number;
         output: number;
@@ -95,6 +97,12 @@ const MessageSchema = new Schema<IMessage>({
         type: Date,
         required: true,
     },
+    attachments: [{
+        name: {type: String, required: true},
+        mimeType: {type: String, required: true},
+        size: {type: Number, required: true},
+        r2Url: {type: String, required: true},
+    }],
     tokenUsage: {
         input: {type: Number},
         output: {type: Number},

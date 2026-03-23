@@ -8,6 +8,20 @@ export interface IAttachment {
     size: number;
 }
 
+/** Persisted attachment metadata (stored in MongoDB alongside messages — no base64 data) */
+export interface IAttachmentMeta {
+    name: string;
+    mimeType: string;
+    size: number;
+    r2Url: string;
+}
+
+/** Return type of buildContentBlocks — content blocks for Claude CLI + metadata for MongoDB */
+export interface IBuildContentBlocksResult {
+    blocks: Record<string, unknown>[];
+    attachmentMeta: IAttachmentMeta[];
+}
+
 export interface INewSessionMessage {
     type: 'new_session';
     text: string;

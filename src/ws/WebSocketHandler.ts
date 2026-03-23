@@ -16,7 +16,7 @@ import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {cleanupSession, registerSession, resolveApproval} from "./toolApprovalStore";
-import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, ISendMessageMessage, ISwitchModelMessage, IToolApprovalResponseMessage} from "../types/ws";
+import {ClientMessage, IAttachmentMeta, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, ISendMessageMessage, ISwitchModelMessage, IToolApprovalResponseMessage} from "../types/ws";
 
 /**
  * Check if the local JSONL session file exists for the given projectDir + sessionId.
@@ -458,6 +458,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         // --- Direct-write state: write messages to MongoDB as they stream ---
         let directWriteSessionOid: Types.ObjectId | null = null;
         let lastWrittenUuid: string | null = null;
+        let pendingAttachmentMeta: IAttachmentMeta[] | null = null;
 
         /** Register session → WS mapping when system event provides the session_id.
          *  Also triggers direct-write session upsert so messages can be saved immediately. */
@@ -544,6 +545,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             const parentUuid: string | undefined = lastWrittenUuid ?? undefined;
             lastWrittenUuid = uuid;
 
+            // Consume pending attachment metadata for user messages (set by new_session/resume_session/send_message)
+            const attachments: IAttachmentMeta[] | undefined = (role === 'user' && pendingAttachmentMeta) ? pendingAttachmentMeta : undefined;
+            if (role === 'user' && pendingAttachmentMeta) {
+                pendingAttachmentMeta = null;
+            }
+
             try {
                 await MessageModel.create({
                     uuid,
@@ -555,8 +562,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     effortLevel: role === 'assistant' ? (activeEffortLevel ?? undefined) : undefined,
                     timestamp: new Date(),
                     tokenUsage,
+                    ...(attachments ? {attachments} : {}),
                 });
-                console.log(`WebSocket: [direct-write] Saved ${role} message (uuid: ${uuid})`.green);
+                console.log(`WebSocket: [direct-write] Saved ${role} message (uuid: ${uuid})${attachments ? ` with ${attachments.length} attachment(s)` : ''}`.green);
             } catch (error: unknown) {
                 // E11000 duplicate key error = message already exists (e.g. from a prior sync) — safe to ignore
                 if (error instanceof Error && error.message.includes('E11000')) {
@@ -793,7 +801,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             : crypto.randomUUID();
                         console.log(`WebSocket: ${clientMessage.type} with ${clientMessage.attachments.length} attachment(s) — uploading to R2 (r2SessionId: ${r2SessionId})`.cyan);
                         try {
-                            firstMsgContentBlocks = await buildContentBlocks(clientMessage.attachments, r2SessionId, clientMessage.text);
+                            const result = await buildContentBlocks(clientMessage.attachments, r2SessionId, clientMessage.text);
+                            firstMsgContentBlocks = result.blocks;
+                            pendingAttachmentMeta = result.attachmentMeta;
                         } catch (uploadError: unknown) {
                             sendError(webSocket, `Failed to upload attachments: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
                             break;
@@ -967,8 +977,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     if (hasAttachments && activeSessionId) {
                         console.log(`WebSocket: send_message with ${sendMsg.attachments!.length} attachment(s) — uploading to R2`.cyan);
                         try {
-                            const contentBlocks: Record<string, unknown>[] = await buildContentBlocks(sendMsg.attachments!, activeSessionId, sendMsg.text);
-                            sendMessage(claudeProcess, sendMsg.text, contentBlocks);
+                            const result = await buildContentBlocks(sendMsg.attachments!, activeSessionId, sendMsg.text);
+                            pendingAttachmentMeta = result.attachmentMeta;
+                            sendMessage(claudeProcess, sendMsg.text, result.blocks);
                         } catch (uploadError: unknown) {
                             sendError(webSocket, `Failed to upload attachments: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
                             return;

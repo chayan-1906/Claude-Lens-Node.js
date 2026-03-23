@@ -1,6 +1,6 @@
 import "colors";
 import {_Object, DeleteObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
-import {IAttachment} from "../types/ws";
+import {IAttachment, IAttachmentMeta, IBuildContentBlocksResult} from "../types/ws";
 import {CLOUDFLARE_ACCESS_KEY_ID, CLOUDFLARE_R2_BUCKET_NAME, CLOUDFLARE_R2_ENDPOINT, CLOUDFLARE_R2_PUBLIC_URL, CLOUDFLARE_SECRET_ACCESS_KEY} from "../config/config";
 
 /** S3-compatible client configured for Cloudflare R2 */
@@ -60,25 +60,27 @@ async function deleteSessionAttachments(sessionId: string): Promise<number> {
 }
 
 /**
- * Process attachments into Claude API content blocks.
+ * Process attachments into Claude API content blocks + persisted metadata.
  * - Images          → upload to R2 → { type: 'image', source: { type: 'url', url } }
  * - PDFs            → upload to R2 → { type: 'document', source: { type: 'url', url } }
- * - Text/code files → read content inline → { type: 'text', text: 'File: ...' }
+ * - Text/code files → upload to R2 → { type: 'text', text: 'File attached: name — url' }
  * Appends the user's text message as the final text block.
+ * Returns both content blocks (for Claude CLI stdin) and attachment metadata (for MongoDB).
  */
-async function buildContentBlocks(attachments: IAttachment[], sessionId: string, text: string): Promise<Record<string, unknown>[]> {
+async function buildContentBlocks(attachments: IAttachment[], sessionId: string, text: string): Promise<IBuildContentBlocksResult> {
     const blocks: Record<string, unknown>[] = [];
+    const attachmentMeta: IAttachmentMeta[] = [];
 
     for (const attachment of attachments) {
+        const url: string = await uploadToR2(attachment, sessionId);
+        attachmentMeta.push({name: attachment.name, mimeType: attachment.mimeType, size: attachment.size, r2Url: url});
+
         if (attachment.mimeType.startsWith('image/')) {
-            const url: string = await uploadToR2(attachment, sessionId);
             blocks.push({type: 'image', source: {type: 'url', url}});
         } else if (attachment.mimeType === 'application/pdf') {
-            const url: string = await uploadToR2(attachment, sessionId);
             blocks.push({type: 'document', source: {type: 'url', url}});
         } else {
-            // Text/code files: upload to R2, send URL reference — Claude uses WebFetch to read content
-            const url: string = await uploadToR2(attachment, sessionId);
+            // Text/code files: send URL reference — Claude uses WebFetch to read content
             blocks.push({type: 'text', text: `File attached: ${attachment.name} — ${url}`});
         }
     }
@@ -88,7 +90,7 @@ async function buildContentBlocks(attachments: IAttachment[], sessionId: string,
         blocks.push({type: 'text', text});
     }
 
-    return blocks;
+    return {blocks, attachmentMeta};
 }
 
 export {uploadToR2, deleteSessionAttachments, buildContentBlocks};

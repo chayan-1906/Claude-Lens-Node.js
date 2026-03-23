@@ -154,7 +154,7 @@ const deleteSessionController = async (req: Request, res: Response) => {
         const {sessionId}: Partial<IDeleteSessionParams> = req.params;
         console.debug('DEBUG: Received params'.cyan, {sessionId});
 
-        const {deletedSessions, deletedMessages, error} = await SessionService.deleteSession({sessionId});
+        const {deletedSessions, deletedMessages, deletedAttachments, error} = await SessionService.deleteSession({sessionId});
         if (error) {
             console.warn('WARN: SessionService.deleteSession returned error'.yellow.bold, {error, sessionId});
             let errorMsg: string = 'Failed to delete session!';
@@ -176,12 +176,13 @@ const deleteSessionController = async (req: Request, res: Response) => {
             return;
         }
 
-        console.log('SUCCESS: Session deleted'.bgGreen.bold, {sessionId, deletedSessions, deletedMessages});
+        console.log('SUCCESS: Session deleted'.bgGreen.bold, {sessionId, deletedSessions, deletedMessages, deletedAttachments});
         res.status(200).send(new ApiResponse({
             success: true,
             message: 'Session has been deleted!',
             deletedSessions,
             deletedMessages,
+            deletedAttachments,
         }));
     } catch (error: any) {
         console.error('Controller Error: deleteSessionController failed'.red.bold, error);

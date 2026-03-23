@@ -17,6 +17,7 @@ export interface IDeleteProjectResponse {
     deletedMessages?: number;
     deletedTasks?: number;
     deletedMemories?: number;
+    deletedAttachments?: number;
     error?: string;
 }
 
