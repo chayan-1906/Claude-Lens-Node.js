@@ -1,11 +1,20 @@
 /** ------------- Client → Server messages ------------- */
 
+/** A file attachment sent with a message (base64-encoded) */
+export interface IAttachment {
+    name: string;
+    mimeType: string;
+    data: string;   // base64-encoded file bytes
+    size: number;
+}
+
 export interface INewSessionMessage {
     type: 'new_session';
     text: string;
     projectDir?: string;
     model?: string;
     effort?: string;
+    attachments?: IAttachment[];
 }
 
 export interface IResumeSessionMessage {
@@ -16,11 +25,13 @@ export interface IResumeSessionMessage {
     projectDir?: string;
     model?: string;
     effort?: string;
+    attachments?: IAttachment[];
 }
 
 export interface ISendMessageMessage {
     type: 'send_message';
     text: string;
+    attachments?: IAttachment[];
 }
 
 export interface IPingMessage {

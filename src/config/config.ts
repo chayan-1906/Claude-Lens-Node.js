@@ -13,7 +13,21 @@ dotenv.config({
 });
 
 /** Centralized app configuration from environment variables */
-export const {NODE_ENV, PORT, MONGO_URI, BACKEND_URL, FRONTEND_URL, APP_VERSION, GROQ_API_KEY} = process.env;
+export const {
+    NODE_ENV,
+    PORT,
+    MONGO_URI,
+    BACKEND_URL,
+    FRONTEND_URL,
+    APP_VERSION,
+    GROQ_API_KEY,
+    CLOUDFLARE_TOKEN,
+    CLOUDFLARE_ACCESS_KEY_ID,
+    CLOUDFLARE_SECRET_ACCESS_KEY,
+    CLOUDFLARE_R2_ENDPOINT,
+    CLOUDFLARE_R2_PUBLIC_URL,
+    CLOUDFLARE_R2_BUCKET_NAME,
+} = process.env;
 
 /** Validate required env vars at startup — fail fast with clear error */
 const REQUIRED_ENV_VARS: string[] = ['PORT'];

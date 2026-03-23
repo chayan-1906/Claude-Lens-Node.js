@@ -92,13 +92,35 @@ function toNdjson(text: string): string {
 }
 
 /**
+ * Format a user message with multimodal content blocks as an NDJSON line.
+ * Used when the message includes image/document/file attachments alongside text.
+ */
+function toNdjsonWithContent(content: Record<string, unknown>[]): string {
+    return JSON.stringify({
+        type: 'user',
+        session_id: '',
+        message: {
+            role: 'user',
+            content,
+        },
+        parent_tool_use_id: null,
+    }) + '\n';
+}
+
+/**
  * Write a follow-up user message to an already-running claude process stdin.
  * Call this for every turn after the first (the first is sent inside spawnClaude).
  * Do NOT close stdin after calling — the process stays alive for more turns.
+ * If contentBlocks is provided, sends a multimodal message (images/documents + text).
  */
-function sendMessage(claudeProcess: ChildProcess, text: string): void {
-    console.debug('DEBUG: Writing follow-up message to claude stdin'.cyan, {text});
-    claudeProcess.stdin!.write(toNdjson(text));
+function sendMessage(claudeProcess: ChildProcess, text: string, contentBlocks?: Record<string, unknown>[]): void {
+    if (contentBlocks) {
+        console.debug('DEBUG: Writing multimodal message to claude stdin'.cyan, {blockCount: contentBlocks.length});
+        claudeProcess.stdin!.write(toNdjsonWithContent(contentBlocks));
+    } else {
+        console.debug('DEBUG: Writing follow-up message to claude stdin'.cyan, {text});
+        claudeProcess.stdin!.write(toNdjson(text));
+    }
 }
 
 /**
@@ -114,7 +136,7 @@ function sendMessage(claudeProcess: ChildProcess, text: string): void {
  * Only fires for complete assistant events (stop_reason !== null) and all user events.
  * Returns the spawned ChildProcess so the caller can manage its lifecycle.
  */
-function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: (resultEvent: Record<string, unknown>) => void, onEvent?: (event: Record<string, unknown>) => void, contextNdjson?: string, contextUserCount?: number, onMessage?: (event: Record<string, unknown>) => void): ChildProcess {
+function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSocket: WebSocket, onResult: (resultEvent: Record<string, unknown>) => void, onEvent?: (event: Record<string, unknown>) => void, contextNdjson?: string, contextUserCount?: number, onMessage?: (event: Record<string, unknown>) => void, firstMessageContentBlocks?: Record<string, unknown>[]): ChildProcess {
     const args: string[] = buildArgs(message);
     console.log(`WebSocket: Spawning claude ${args.join(' ')}`.cyan);
 
@@ -132,7 +154,9 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
 
     // Send the first user message as NDJSON — stdin stays open for follow-ups.
     // Skip when text is empty (e.g. switch_model: re-spawn without sending a message).
-    if (message.text && message.text.trim()) {
+    if (firstMessageContentBlocks) {
+        sendMessage(claudeProcess, message.text, firstMessageContentBlocks);
+    } else if (message.text && message.text.trim()) {
         sendMessage(claudeProcess, message.text);
     }
 

@@ -1,12 +1,14 @@
 import "colors";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import {ChildProcess} from "child_process";
 import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
 import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
+import {buildContentBlocks} from "../utils/r2";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
@@ -14,7 +16,7 @@ import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {cleanupSession, registerSession, resolveApproval} from "./toolApprovalStore";
-import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, ISwitchModelMessage, IToolApprovalResponseMessage} from "../types/ws";
+import {ClientMessage, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, ISendMessageMessage, ISwitchModelMessage, IToolApprovalResponseMessage} from "../types/ws";
 
 /**
  * Check if the local JSONL session file exists for the given projectDir + sessionId.
@@ -693,8 +695,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         return;
                     }
 
-                    if (!clientMessage.text || !clientMessage.text.trim()) {
-                        sendError(webSocket, 'Message text is required!');
+                    const hasAttachments: boolean = !!(clientMessage.attachments && clientMessage.attachments.length > 0);
+                    if ((!clientMessage.text || !clientMessage.text.trim()) && !hasAttachments) {
+                        sendError(webSocket, 'Message text or attachments required!');
                         return;
                     }
 
@@ -779,6 +782,24 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         : clientMessage;
 
                     activeEffortLevel = spawnMessage.effort ?? null;
+
+                    // Build multimodal content blocks if attachments are present
+                    let firstMsgContentBlocks: Record<string, unknown>[] | undefined;
+                    if (clientMessage.attachments && clientMessage.attachments.length > 0) {
+                        // For resume_session the sessionId is known; for new_session generate a temporary UUID
+                        // (R2 key prefix only — the real CLI session ID arrives later in the system event)
+                        const r2SessionId: string = clientMessage.type === 'resume_session'
+                            ? clientMessage.sessionId
+                            : crypto.randomUUID();
+                        console.log(`WebSocket: ${clientMessage.type} with ${clientMessage.attachments.length} attachment(s) — uploading to R2 (r2SessionId: ${r2SessionId})`.cyan);
+                        try {
+                            firstMsgContentBlocks = await buildContentBlocks(clientMessage.attachments, r2SessionId, clientMessage.text);
+                        } catch (uploadError: unknown) {
+                            sendError(webSocket, `Failed to upload attachments: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+                            break;
+                        }
+                    }
+
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
                     claudeProcess = spawnClaude(spawnMessage, webSocket, (resultEvent: Record<string, unknown>) => {
                         // Persist context immediately for existing sessions (resume).
@@ -789,7 +810,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             await autoSyncWebUI();
                             await persistResultContext(resultEvent);
                         });
-                    }, onSystemEvent, undefined, undefined, directWriteMessage);
+                    }, onSystemEvent, undefined, undefined, directWriteMessage, firstMsgContentBlocks);
 
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
@@ -935,13 +956,27 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         return;
                     }
 
-                    if (!clientMessage.text || !clientMessage.text.trim()) {
-                        sendError(webSocket, 'Message text is required!');
+                    const sendMsg: ISendMessageMessage = clientMessage as ISendMessageMessage;
+                    const hasAttachments: boolean = !!(sendMsg.attachments && sendMsg.attachments.length > 0);
+
+                    if ((!sendMsg.text || !sendMsg.text.trim()) && !hasAttachments) {
+                        sendError(webSocket, 'Message text or attachments required!');
                         return;
                     }
 
-                    console.log('WebSocket: Sending follow-up message to existing claude process'.cyan);
-                    sendMessage(claudeProcess, clientMessage.text);
+                    if (hasAttachments && activeSessionId) {
+                        console.log(`WebSocket: send_message with ${sendMsg.attachments!.length} attachment(s) — uploading to R2`.cyan);
+                        try {
+                            const contentBlocks: Record<string, unknown>[] = await buildContentBlocks(sendMsg.attachments!, activeSessionId, sendMsg.text);
+                            sendMessage(claudeProcess, sendMsg.text, contentBlocks);
+                        } catch (uploadError: unknown) {
+                            sendError(webSocket, `Failed to upload attachments: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+                            return;
+                        }
+                    } else {
+                        console.log('WebSocket: Sending follow-up message to existing claude process'.cyan);
+                        sendMessage(claudeProcess, sendMsg.text);
+                    }
                     break;
                 }
 
