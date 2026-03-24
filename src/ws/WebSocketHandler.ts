@@ -200,36 +200,60 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void 
     }
 
     // Step 3.5: Strip orphaned tool_use blocks from assistant messages — the mirror of Step 3.
-    // An assistant tool_use block without a matching tool_result in the next user message
-    // causes the Anthropic API to return 400 ("tool use concurrency issues").
-    const toolResultRefIds: Set<string> = new Set();
-    for (const message of cleaned) {
-        if (message.role === 'user' && Array.isArray(message.content)) {
-            for (const block of message.content as Record<string, unknown>[]) {
-                if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
-                    toolResultRefIds.add(block.tool_use_id);
-                }
-            }
-        }
-    }
-
+    // An assistant tool_use block without a matching tool_result in the IMMEDIATELY FOLLOWING
+    // user message causes the Anthropic API to return 400 ("tool use concurrency issues").
+    // Uses positional pairing instead of a global set to match the API's per-turn adjacency requirement.
     const repaired: IMessage[] = [];
-    for (const message of cleaned) {
+    for (let i = 0; i < cleaned.length; i++) {
+        const message: IMessage = cleaned[i];
         if (message.role === 'assistant' && Array.isArray(message.content)) {
-            const blocks = (message.content as Record<string, unknown>[]).filter((block: Record<string, unknown>) => {
-                if (block.type === 'tool_use' && typeof block.id === 'string') {
-                    if (!toolResultRefIds.has(block.id)) {
-                        console.warn(`WebSocket: [RECONSTRUCT] Stripping orphaned tool_use (id: ${block.id}) from assistant message (uuid: ${message.uuid})`.yellow);
-                        return false;
+            const thisToolUseIds: Set<string> = new Set(
+                (message.content as Record<string, unknown>[])
+                    .filter((b: Record<string, unknown>) => b.type === 'tool_use' && typeof b.id === 'string')
+                    .map((b: Record<string, unknown>) => b.id as string),
+            );
+
+            if (thisToolUseIds.size > 0) {
+                // Find the immediately following user message — forward scan, no slice allocation
+                let nextUser: IMessage | undefined;
+                for (let j = i + 1; j < cleaned.length; j++) {
+                    if (cleaned[j].role === 'user') {
+                        nextUser = cleaned[j];
+                        break;
                     }
                 }
-                return true;
-            });
-            if (blocks.length === 0) {
-                console.warn(`WebSocket: [RECONSTRUCT] Removing assistant message (uuid: ${message.uuid}) — all content was orphaned tool_use`.yellow);
-                continue;
+                const nextUserToolResultIds: Set<string> = new Set(
+                    nextUser && Array.isArray(nextUser.content)
+                        ? (nextUser.content as Record<string, unknown>[])
+                            .filter((b: Record<string, unknown>) => b.type === 'tool_result' && typeof b.tool_use_id === 'string')
+                            .map((b: Record<string, unknown>) => b.tool_use_id as string)
+                        : [],
+                );
+
+                const blocks: Record<string, unknown>[] = (message.content as Record<string, unknown>[]).filter(
+                    (block: Record<string, unknown>) => {
+                        if (block.type === 'tool_use' && typeof block.id === 'string') {
+                            if (!nextUserToolResultIds.has(block.id)) {
+                                console.warn(
+                                    `WebSocket: [RECONSTRUCT] Stripping orphaned tool_use (id: ${block.id}) from assistant message (uuid: ${message.uuid}) — no matching tool_result in next user message`.yellow,
+                                );
+                                return false;
+                            }
+                        }
+                        return true;
+                    },
+                );
+
+                if (blocks.length === 0) {
+                    console.warn(
+                        `WebSocket: [RECONSTRUCT] Removing assistant message (uuid: ${message.uuid}) — all content was orphaned tool_use`.yellow,
+                    );
+                    continue;
+                }
+                repaired.push({...message, content: blocks} as IMessage);
+            } else {
+                repaired.push(message);
             }
-            repaired.push({...message, content: blocks} as IMessage);
         } else {
             repaired.push(message);
         }
