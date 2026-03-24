@@ -47,6 +47,7 @@ export interface IMessage extends Document {
     content: string | ContentBlock[];
     aiModel?: string;                       // present only on assistant messages
     effortLevel?: string;                   // effort level used at spawn time (low/medium/high/max)
+    thinking?: boolean;                     // extended thinking toggle state at spawn time
     timestamp: Date;                        // original timestamp from JSONL envelope
     attachments?: IAttachmentMeta[];        // R2 metadata for user messages with file attachments
     tokenUsage?: {
@@ -92,6 +93,9 @@ const MessageSchema = new Schema<IMessage>({
     },
     effortLevel: {
         type: String,
+    },
+    thinking: {
+        type: Boolean,
     },
     timestamp: {
         type: Date,

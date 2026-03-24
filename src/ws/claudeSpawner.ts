@@ -37,6 +37,10 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         args.push('--effort', message.effort);
     }
 
+    if (typeof message.thinking === 'boolean') {
+        args.push('--settings', JSON.stringify({alwaysThinkingEnabled: message.thinking}));
+    }
+
     console.debug('args:'.cyan, args);
     return args;
 }

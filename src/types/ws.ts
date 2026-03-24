@@ -28,6 +28,7 @@ export interface INewSessionMessage {
     projectDir?: string;
     model?: string;
     effort?: string;
+    thinking?: boolean;
     attachments?: IAttachment[];
 }
 
@@ -39,6 +40,7 @@ export interface IResumeSessionMessage {
     projectDir?: string;
     model?: string;
     effort?: string;
+    thinking?: boolean;
     attachments?: IAttachment[];
 }
 
@@ -90,6 +92,7 @@ export interface ISwitchModelMessage {
     type: 'switch_model';
     model: string;
     effort?: string;
+    thinking?: boolean;
 }
 
 /** Client → Server: user's decision on a pending tool approval */

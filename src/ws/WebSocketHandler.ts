@@ -478,6 +478,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         let syncTimer: ReturnType<typeof setTimeout> | null = null;
         let activeSessionId: string | null = null;
         let activeEffortLevel: string | null = null;
+        let activeThinking: boolean | null = null;
 
         // --- Direct-write state: write messages to MongoDB as they stream ---
         let directWriteSessionOid: Types.ObjectId | null = null;
@@ -584,6 +585,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     content,
                     aiModel,
                     effortLevel: role === 'assistant' ? (activeEffortLevel ?? undefined) : undefined,
+                    thinking: role === 'assistant' ? (activeThinking ?? undefined) : undefined,
                     timestamp: new Date(),
                     tokenUsage,
                     ...(attachments ? {attachments} : {}),
@@ -814,6 +816,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         : clientMessage;
 
                     activeEffortLevel = spawnMessage.effort ?? null;
+                    activeThinking = typeof spawnMessage.thinking === 'boolean' ? spawnMessage.thinking : null;
 
                     // Build multimodal content blocks if attachments are present
                     let firstMsgContentBlocks: Record<string, unknown>[] | undefined;
@@ -1056,6 +1059,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     // Re-spawn with --resume --model (no initial message — user sends via send_message)
                     activeEffortLevel = switchMsg.effort ?? null;
+                    activeThinking = typeof switchMsg.thinking === 'boolean' ? switchMsg.thinking : null;
                     const resumeMsg: IResumeSessionMessage = {
                         type: 'resume_session',
                         sessionId: activeSessionId,
@@ -1063,6 +1067,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         projectDir: switchSession.rawProjectDir,
                         model: switchMsg.model,
                         effort: switchMsg.effort,
+                        thinking: switchMsg.thinking,
                     };
 
                     claudeProcess = spawnClaude(resumeMsg, webSocket, (resultEvent: Record<string, unknown>) => {
