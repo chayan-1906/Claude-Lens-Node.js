@@ -5,6 +5,24 @@ import {IPendingApproval, IToolApprovalDecision, IToolApprovalDetails} from "../
 
 const sessionWebSockets: Map<string, WebSocket> = new Map();
 
+/** ------------- IDE openDiff hooks ------------- */
+
+type IdeOpenDiffHookFn = (toolName: string, toolInput: Record<string, unknown>) => void;
+const ideOpenDiffHooks: Map<string, IdeOpenDiffHookFn> = new Map();
+
+/**
+ * Register a per-session callback invoked just before tool_approval_request is sent.
+ * The callback should call IdeService.openDiff() so IntelliJ shows the diff in sync
+ * with the web UI's DiffView prompt.
+ */
+function registerIdeOpenDiffHook(sessionId: string, fn: IdeOpenDiffHookFn): void {
+    ideOpenDiffHooks.set(sessionId, fn);
+}
+
+function unregisterIdeOpenDiffHook(sessionId: string): void {
+    ideOpenDiffHooks.delete(sessionId);
+}
+
 function registerSession(sessionId: string, ws: WebSocket): void {
     sessionWebSockets.set(sessionId, ws);
     console.log(`ToolApprovalStore: Registered session → WS (sessionId: ${sessionId})`.cyan);
@@ -43,6 +61,16 @@ function createApproval(details: IToolApprovalDetails): Promise<IToolApprovalDec
         }, APPROVAL_TIMEOUT_MS);
 
         pendingApprovals.set(details.requestId, {sessionId: details.sessionId, resolve, reject, timeout});
+
+        // Fire IDE openDiff hook — best-effort, must never block or throw
+        const ideHook: IdeOpenDiffHookFn | undefined = ideOpenDiffHooks.get(details.sessionId);
+        if (ideHook) {
+            try {
+                ideHook(details.toolName, details.toolInput);
+            } catch (err: unknown) {
+                console.warn(`ToolApprovalStore: IDE openDiff hook failed — ${err}`);
+            }
+        }
 
         // Send approval request to the frontend
         ws.send(JSON.stringify({
@@ -88,6 +116,7 @@ function cleanupSession(sessionId: string): void {
         pendingApprovals.delete(requestId);
     }
     unregisterSession(sessionId);
+    unregisterIdeOpenDiffHook(sessionId);
 }
 
-export {registerSession, unregisterSession, getSessionWebSocket, createApproval, resolveApproval, cleanupSession};
+export {registerSession, unregisterSession, getSessionWebSocket, createApproval, resolveApproval, cleanupSession, registerIdeOpenDiffHook};

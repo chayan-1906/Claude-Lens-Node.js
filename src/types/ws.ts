@@ -147,5 +147,32 @@ export interface ISessionStoppedMessage {
     type: 'session_stopped';
 }
 
+/** Server → Client: IDE (IntelliJ) connected via MCP */
+export interface IIdeConnectedMessage {
+    type: 'ide_connected';
+    ideName: string;
+    port: number;
+}
+
+/** Server → Client: IDE disconnected */
+export interface IIdeDisconnectedMessage {
+    type: 'ide_disconnected';
+    reason?: string;
+}
+
+/** Server → Client: IDE cursor/file selection changed */
+export interface IIdeSelectionChangedMessage {
+    type: 'ide_selection_changed';
+    filePath: string;
+    fileName: string;
+    lineNumber: number;
+}
+
+/** Server → Client: IDE connection or tool call error */
+export interface IIdeErrorMessage {
+    type: 'ide_error';
+    message: string;
+}
+
 /** stream-json events are forwarded as-is (system, assistant, result) */
-export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | IToolApprovalRequestMessage | ISessionStoppedMessage | Record<string, unknown>;
+export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | IToolApprovalRequestMessage | ISessionStoppedMessage | IIdeConnectedMessage | IIdeDisconnectedMessage | IIdeSelectionChangedMessage | IIdeErrorMessage | Record<string, unknown>;

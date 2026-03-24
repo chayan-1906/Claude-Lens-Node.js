@@ -7,6 +7,7 @@ import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
 import {Types} from "mongoose";
 import TaskModel from "../models/Task";
+import {IdeService} from "./IdeService";
 import MemoryModel from "../models/Memory";
 import {buildContentBlocks} from "../utils/r2";
 import SyncService from "../services/SyncService";
@@ -15,8 +16,18 @@ import MessageModel, {IMessage} from "../models/Message";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
-import {cleanupSession, registerSession, resolveApproval} from "./toolApprovalStore";
-import {ClientMessage, IAttachmentMeta, IEditSessionMessage, INewSessionMessage, IProjectNotAvailableMessage, IResumeSessionMessage, ISendMessageMessage, ISwitchModelMessage, IToolApprovalResponseMessage} from "../types/ws";
+import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
+import {
+    ClientMessage,
+    IAttachmentMeta,
+    IEditSessionMessage,
+    INewSessionMessage,
+    IProjectNotAvailableMessage,
+    IResumeSessionMessage,
+    ISendMessageMessage,
+    ISwitchModelMessage,
+    IToolApprovalResponseMessage
+} from "../types/ws";
 
 /**
  * Check if the local JSONL session file exists for the given projectDir + sessionId.
@@ -480,6 +491,59 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         let activeEffortLevel: string | null = null;
         let activeThinking: boolean | null = null;
 
+        // --- IDE (IntelliJ) state ---
+        let ideService: IdeService | null = null;
+        let ideConnectedInfo: { ideName: string; port: number } | null = null;
+        let activeProjectDir: string | null = null;  // raw cwd from system event — used to resolve relative tool paths
+        let lastDiffTabName: string | null = null;   // tab_name of the last openDiff — closed on approval/deny
+
+        /** Forward IDE MCP events to the WebSocket client */
+        const onIdeEvent = (event: Record<string, unknown>): void => {
+            if (event.type === 'ide_connected') {
+                ideConnectedInfo = {ideName: event.ideName as string, port: event.port as number};
+            } else if (event.type === 'ide_disconnected') {
+                ideConnectedInfo = null;
+            }
+            if (webSocket.readyState === WebSocket.OPEN) {
+                webSocket.send(JSON.stringify(event));
+            }
+        }
+
+        /** Best-effort IDE auto-connect — silent if IDE not running */
+        const autoConnectIde = (): void => {
+            ideService = new IdeService(onIdeEvent);
+            ideService.connect().catch((error: unknown) => {
+                console.log(`IdeService: Auto-connect skipped — ${error}`.gray);
+                ideService = null;
+            });
+        }
+
+        /** Handle /ide slash command — (re)connect or re-confirm existing connection */
+        const handleIdeCommand = async (): Promise<void> => {
+            if (ideService?.isConnected) {
+                // Already connected — re-send status as confirmation
+                if (webSocket.readyState === WebSocket.OPEN) {
+                    webSocket.send(JSON.stringify({
+                        type: 'ide_connected',
+                        ideName: ideConnectedInfo?.ideName ?? 'Unknown IDE',
+                        port: ideConnectedInfo?.port ?? 0,
+                    }));
+                }
+                return;
+            }
+            // Attempt (re)connect
+            ideService = new IdeService(onIdeEvent);
+            try {
+                await ideService.connect();
+                // ide_connected event already forwarded via onIdeEvent
+            } catch (error: unknown) {
+                ideService = null;
+                if (webSocket.readyState === WebSocket.OPEN) {
+                    webSocket.send(JSON.stringify({type: 'ide_error', message: String(error)}));
+                }
+            }
+        }
+
         // --- Direct-write state: write messages to MongoDB as they stream ---
         let directWriteSessionOid: Types.ObjectId | null = null;
         let lastWrittenUuid: string | null = null;
@@ -490,8 +554,42 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         const onSystemEvent = (event: Record<string, unknown>): void => {
             if (event.type === 'system' && event.session_id) {
                 activeSessionId = event.session_id as string;
+                activeProjectDir = (event.cwd as string) || null;
                 registerSession(activeSessionId, webSocket);
                 upsertSessionOnInit(event);
+
+                // Register IDE openDiff hook — fires when a tool approval is requested,
+                // opening the diff in IntelliJ in sync with the web UI DiffView prompt.
+                registerIdeOpenDiffHook(activeSessionId, (toolName: string, toolInput: Record<string, unknown>): void => {
+                    if (!ideService?.isConnected) return;
+                    if (toolName !== 'Write' && toolName !== 'Edit') return;
+
+                    const rawPath: string = (toolInput.file_path as string) ?? '';
+                    if (!rawPath) return;
+
+                    // Resolve relative paths against the session cwd — IntelliJ requires absolute paths
+                    const filePath: string = path.isAbsolute(rawPath)
+                        ? rawPath
+                        : activeProjectDir
+                            ? path.resolve(activeProjectDir, rawPath)
+                            : rawPath;
+
+                    // Compute new file content — IntelliJ reads old content from disk via old_file_path
+                    let newContent: string;
+                    if (toolName === 'Write') {
+                        newContent = (toolInput.content as string) ?? '';
+                    } else {
+                        // Edit: apply old_string → new_string replacement on the current file
+                        const existing: string = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
+                        const oldStr: string = (toolInput.old_string as string) ?? '';
+                        const newStr: string = (toolInput.new_string as string) ?? '';
+                        newContent = existing.replace(oldStr, newStr);
+                    }
+
+                    console.log(`IdeService: Opening diff for ${filePath}`.cyan);
+                    lastDiffTabName = path.basename(filePath);
+                    ideService!.openDiff(filePath, newContent, lastDiffTabName);
+                });
             }
         }
 
@@ -849,6 +947,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         });
                     }, onSystemEvent, undefined, undefined, directWriteMessage, firstMsgContentBlocks);
 
+                    // Best-effort IDE auto-connect on session start
+                    autoConnectIde();
+
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: claude process exited with code ${code}`.cyan);
 
@@ -970,6 +1071,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         });
                     }, captureSessionId, contextNdjson, contextUserCount, directWriteMessage);
 
+                    // Best-effort IDE auto-connect on edit_session start
+                    autoConnectIde();
+
                     claudeProcess.on('exit', (code: number | null) => {
                         console.log(`WebSocket: edit_session claude process exited with code ${code}`.cyan);
                         if (webSocket.readyState === WebSocket.OPEN) {
@@ -999,6 +1103,13 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     if ((!sendMsg.text || !sendMsg.text.trim()) && !hasAttachments) {
                         sendError(webSocket, 'Message text or attachments required!');
                         return;
+                    }
+
+                    // Intercept /ide — connect to IntelliJ IDE, do NOT forward to Claude
+                    if (sendMsg.text?.trim() === '/ide') {
+                        console.log('WebSocket: Intercepted /ide command — handling IDE connection'.cyan);
+                        handleIdeCommand();
+                        break;
                     }
 
                     if (hasAttachments && activeSessionId) {
@@ -1110,6 +1221,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     if (!resolved) {
                         console.warn(`WebSocket: No pending approval found for requestId: ${approvalMsg.requestId}`.yellow);
                     }
+
+                    // Close the diff tab in IntelliJ after approval/denial
+                    if (lastDiffTabName && ideService?.isConnected) {
+                        ideService.closeTab(lastDiffTabName);
+                        lastDiffTabName = null;
+                    }
                     break;
                 }
 
@@ -1129,6 +1246,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 console.log('WebSocket: Killing claude process (SIGTERM → SIGKILL)'.yellow);
                 killClaudeProcess(claudeProcess);
                 claudeProcess = null;
+            }
+            if (ideService) {
+                ideService.disconnect();
+                ideService = null;
             }
         });
 
