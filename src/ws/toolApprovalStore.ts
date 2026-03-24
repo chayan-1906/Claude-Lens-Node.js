@@ -7,7 +7,7 @@ const sessionWebSockets: Map<string, WebSocket> = new Map();
 
 /** ------------- IDE openDiff hooks ------------- */
 
-type IdeOpenDiffHookFn = (toolName: string, toolInput: Record<string, unknown>) => void;
+type IdeOpenDiffHookFn = (toolName: string, toolInput: Record<string, unknown>, requestId: string) => void;
 const ideOpenDiffHooks: Map<string, IdeOpenDiffHookFn> = new Map();
 
 /**
@@ -40,7 +40,7 @@ function getSessionWebSocket(sessionId: string): WebSocket | undefined {
 
 /** ------------- Pending approval requests ------------- */
 
-const APPROVAL_TIMEOUT_MS: number = 300_000; // 5 minutes — well within the hook's 600s default
+const APPROVAL_TIMEOUT_MS: number = 14_400_000; // 4 hours — allows long breaks (lunch, meetings) while Claude waits for approval
 const pendingApprovals: Map<string, IPendingApproval> = new Map();
 
 /**
@@ -66,7 +66,7 @@ function createApproval(details: IToolApprovalDetails): Promise<IToolApprovalDec
         const ideHook: IdeOpenDiffHookFn | undefined = ideOpenDiffHooks.get(details.sessionId);
         if (ideHook) {
             try {
-                ideHook(details.toolName, details.toolInput);
+                ideHook(details.toolName, details.toolInput, details.requestId);
             } catch (err: unknown) {
                 console.warn(`ToolApprovalStore: IDE openDiff hook failed — ${err}`);
             }

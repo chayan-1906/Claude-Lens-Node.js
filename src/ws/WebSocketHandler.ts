@@ -496,6 +496,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         let ideConnectedInfo: { ideName: string; port: number } | null = null;
         let activeProjectDir: string | null = null;  // raw cwd from system event — used to resolve relative tool paths
         let lastDiffTabName: string | null = null;   // tab_name of the last openDiff — closed on approval/deny
+        let lastDiffRequestId: string | null = null; // requestId of the tool approval linked to the current diff
+        let lastDiffFilePath: string | null = null;  // absolute path of the file being diffed
+        let pendingIdeOverwrite: { filePath: string; content: string } | null = null; // user-modified content from IDE Apply — re-written after Claude writes
 
         /** Forward IDE MCP events to the WebSocket client */
         const onIdeEvent = (event: Record<string, unknown>): void => {
@@ -504,6 +507,40 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             } else if (event.type === 'ide_disconnected') {
                 ideConnectedInfo = null;
             }
+
+            // IDE Apply/Reject → auto-resolve the web UI tool approval
+            if (event.type === 'ide_diff_applied' || event.type === 'ide_diff_rejected') {
+                if (lastDiffRequestId) {
+                    const decision: 'allow' | 'deny' = event.type === 'ide_diff_applied' ? 'allow' : 'deny';
+                    console.log(`IdeService: IDE ${decision === 'allow' ? 'Apply' : 'Reject'} → auto-resolving approval (requestId: ${lastDiffRequestId})`.cyan);
+
+                    // If IDE Apply: store user-modified content to re-write after Claude writes.
+                    // Claude's tool execution overwrites IntelliJ's write; we restore user's version
+                    // once the tool_result event confirms Claude finished.
+                    if (event.type === 'ide_diff_applied' && lastDiffFilePath) {
+                        const savedContent: string | undefined = event.savedContent as string | undefined;
+                        if (savedContent !== undefined) {
+                            pendingIdeOverwrite = {filePath: lastDiffFilePath, content: savedContent};
+                            console.log(`IdeService: Stored user's IDE modifications (${savedContent.length} chars) — will re-apply after Claude writes`.cyan);
+                        }
+                    }
+
+                    resolveApproval(lastDiffRequestId, {permissionDecision: decision});
+                    // Tell frontend to dismiss the approval prompt
+                    if (webSocket.readyState === WebSocket.OPEN) {
+                        webSocket.send(JSON.stringify({type: 'tool_approval_auto_resolved', requestId: lastDiffRequestId, decision}));
+                    }
+                    // Close the diff tab
+                    if (lastDiffTabName && ideService?.isConnected) {
+                        ideService.closeTab(lastDiffTabName);
+                    }
+                    lastDiffRequestId = null;
+                    lastDiffTabName = null;
+                    lastDiffFilePath = null;
+                }
+                return; // Don't forward internal diff events to frontend
+            }
+
             if (webSocket.readyState === WebSocket.OPEN) {
                 webSocket.send(JSON.stringify(event));
             }
@@ -511,12 +548,26 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
         /** Best-effort IDE auto-connect — silent if IDE not running */
         const autoConnectIde = (): void => {
+            console.log('IdeService: Auto-connect attempt...'.cyan);
+            // Skip if already connected (e.g., session spawn after initial connection)
+            if (ideService?.isConnected) {
+                console.log('IdeService: Auto-connect skipped — already connected'.gray);
+                return;
+            }
             ideService = new IdeService(onIdeEvent);
-            ideService.connect().catch((error: unknown) => {
-                console.log(`IdeService: Auto-connect skipped — ${error}`.gray);
-                ideService = null;
-            });
+            ideService.connect()
+                .then(() => {
+                    console.log('IdeService: Auto-connect succeeded'.green);
+                })
+                .catch((error: unknown) => {
+                    console.log(`IdeService: Auto-connect failed — ${error}`.gray);
+                    ideService = null;
+                });
         }
+
+        // Auto-connect IDE on WebSocket connection (before any session spawns)
+        // so the indicator shows immediately when the page loads.
+        autoConnectIde();
 
         /** Handle /ide slash command — (re)connect or re-confirm existing connection */
         const handleIdeCommand = async (): Promise<void> => {
@@ -552,6 +603,23 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         /** Register session → WS mapping when system event provides the session_id.
          *  Also triggers direct-write session upsert so messages can be saved immediately. */
         const onSystemEvent = (event: Record<string, unknown>): void => {
+            // After IDE Apply: Claude writes its original content (overwriting user modifications).
+            // When the tool_result arrives (user event), Claude is done writing — re-apply
+            // the user's IDE modifications so their edits persist.
+            if (pendingIdeOverwrite && event.type === 'user') {
+                const msg = event.message as Record<string, unknown> | undefined;
+                const content = msg?.content as Array<Record<string, unknown>> | undefined;
+                if (content?.some((b: Record<string, unknown>) => b.type === 'tool_result')) {
+                    try {
+                        fs.writeFileSync(pendingIdeOverwrite.filePath, pendingIdeOverwrite.content, 'utf-8');
+                        console.log(`IdeService: Re-applied user's IDE modifications to ${pendingIdeOverwrite.filePath} (${pendingIdeOverwrite.content.length} chars)`.green.bold);
+                    } catch (err: unknown) {
+                        console.warn(`IdeService: Failed to re-apply IDE modifications — ${err}`.yellow);
+                    }
+                    pendingIdeOverwrite = null;
+                }
+            }
+
             if (event.type === 'system' && event.session_id) {
                 activeSessionId = event.session_id as string;
                 activeProjectDir = (event.cwd as string) || null;
@@ -560,7 +628,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                 // Register IDE openDiff hook — fires when a tool approval is requested,
                 // opening the diff in IntelliJ in sync with the web UI DiffView prompt.
-                registerIdeOpenDiffHook(activeSessionId, (toolName: string, toolInput: Record<string, unknown>): void => {
+                registerIdeOpenDiffHook(activeSessionId, (toolName: string, toolInput: Record<string, unknown>, requestId: string): void => {
                     if (!ideService?.isConnected) return;
                     if (toolName !== 'Write' && toolName !== 'Edit') return;
 
@@ -588,6 +656,8 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     console.log(`IdeService: Opening diff for ${filePath}`.cyan);
                     lastDiffTabName = path.basename(filePath);
+                    lastDiffRequestId = requestId;
+                    lastDiffFilePath = filePath;
                     ideService!.openDiff(filePath, newContent, lastDiffTabName);
                 });
             }
@@ -813,6 +883,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             }
 
             switch (clientMessage.type) {
+                case 'request_ide_status': {
+                    // Frontend requests current IDE status on mount — reply immediately
+                    if (ideService?.isConnected && ideConnectedInfo && webSocket.readyState === WebSocket.OPEN) {
+                        webSocket.send(JSON.stringify({type: 'ide_connected', ideName: ideConnectedInfo.ideName, port: ideConnectedInfo.port}));
+                    }
+                    break;
+                }
+
                 case 'ping': {
                     if (webSocket.readyState === WebSocket.OPEN) {
                         webSocket.send(JSON.stringify({type: 'pong'}));
@@ -1222,11 +1300,18 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         console.warn(`WebSocket: No pending approval found for requestId: ${approvalMsg.requestId}`.yellow);
                     }
 
-                    // Close the diff tab in IntelliJ after approval/denial
-                    if (lastDiffTabName && ideService?.isConnected) {
-                        ideService.closeTab(lastDiffTabName);
-                        lastDiffTabName = null;
+                    // Cancel the pending openDiff call (user approved via web UI, not IDE)
+                    // and close the diff tab in IntelliJ
+                    if (ideService?.isConnected) {
+                        ideService.cancelPendingDiff();
+                        if (lastDiffTabName) {
+                            ideService.closeTab(lastDiffTabName);
+                        }
                     }
+                    lastDiffTabName = null;
+                    lastDiffRequestId = null;
+                    lastDiffFilePath = null;
+                    pendingIdeOverwrite = null; // web UI took over — no IDE overwrite needed
                     break;
                 }
 

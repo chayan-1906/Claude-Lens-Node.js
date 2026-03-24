@@ -54,6 +54,11 @@ export interface IPingMessage {
     type: 'ping';
 }
 
+/** Client → Server: request current IDE connection status (sent on frontend mount) */
+export interface IRequestIdeStatusMessage {
+    type: 'request_ide_status';
+}
+
 export interface IEditSessionMessage {
     type: 'edit_session';
     sessionId: string;
@@ -103,7 +108,7 @@ export interface IToolApprovalResponseMessage {
     reason?: string;
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IEditSessionMessage | IStopExecutionMessage | ISwitchModelMessage | IToolApprovalResponseMessage;
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IRequestIdeStatusMessage | IEditSessionMessage | IStopExecutionMessage | ISwitchModelMessage | IToolApprovalResponseMessage;
 
 
 /** ------------- Server → Client messages ------------- */

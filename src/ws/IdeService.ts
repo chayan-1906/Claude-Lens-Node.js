@@ -6,6 +6,7 @@ import {IdeEventCallback, IIdeLockFile, IIdeLockFileJson, IPendingCall} from "..
 
 const CALL_TIMEOUT_MS: number = 10_000;
 const CONNECT_TIMEOUT_MS: number = 5_000;
+const DIFF_TIMEOUT_MS: number = 14_400_000; // 4 hours — matches tool approval timeout
 
 /**
  * MCP client for the JetBrains Claude Code plugin.
@@ -22,6 +23,7 @@ class IdeService {
     private pendingCalls: Map<number, IPendingCall> = new Map();
     private connected: boolean = false;
     private readonly onEvent: IdeEventCallback;
+    private pendingDiffId: number | null = null;
 
     constructor(onEvent: IdeEventCallback) {
         this.onEvent = onEvent;
@@ -297,16 +299,21 @@ class IdeService {
     }
 
     /**
-     * Open a diff in the IDE (fire-and-forget).
+     * Open a diff in the IDE.
      * IntelliJ reads old content from old_file_path on disk — no need to pass it.
      * For new files, IntelliJ shows an empty left side.
      *
-     * Fire-and-forget because IntelliJ's openDiff blocks until the user clicks
-     * Apply/Reject in the IDE. Actual approval happens via the web UI buttons,
-     * not through IntelliJ — the diff is shown for review/viewing only.
+     * The call is tracked: when the user clicks Apply/Reject in IntelliJ, the
+     * response fires an `ide_diff_applied` or `ide_diff_rejected` event via onEvent.
+     * If the user approves via the web UI instead, call cancelPendingDiff() to clean up.
      */
     openDiff(filePath: string, newContent: string, tabName?: string): void {
         if (!this.connected || !this.ws) return;
+
+        // Cancel any previous pending diff
+        this.cancelPendingDiff();
+
+        // Uses module-level DIFF_TIMEOUT_MS constant (4 hours)
         const args: Record<string, unknown> = {
             old_file_path: filePath,
             new_file_path: filePath,
@@ -314,8 +321,51 @@ class IdeService {
             tab_name: tabName ?? path.basename(filePath),
         };
         const id: number = this.nextId++;
-        console.log(`IdeService: openDiff → path: ${filePath}, newContent length: ${newContent.length}, tab: ${args.tab_name} (fire-and-forget, id: ${id})`.cyan);
+        this.pendingDiffId = id;
+
+        const timeout: ReturnType<typeof setTimeout> = setTimeout(() => {
+            this.pendingCalls.delete(id);
+            this.pendingDiffId = null;
+            console.log('IdeService: openDiff timed out (5min) — user did not Apply/Reject in IDE'.gray);
+        }, DIFF_TIMEOUT_MS);
+
+        this.pendingCalls.set(id, {
+            resolve: (result: unknown): void => {
+                clearTimeout(timeout);
+                this.pendingDiffId = null;
+                const res = result as Record<string, unknown> | null;
+                const content: Array<Record<string, unknown>> = ((res?.content ?? []) as Array<Record<string, unknown>>);
+                const isError: boolean = (res?.isError as boolean) ?? false;
+                const applied: boolean = !isError && content.some((c: Record<string, unknown>) => c.text === 'FILE_SAVED');
+                // Extract the user's saved content (second text block after FILE_SAVED)
+                const savedContent: string | undefined = applied
+                    ? (content.find((c: Record<string, unknown>) => c.type === 'text' && c.text !== 'FILE_SAVED')?.text as string | undefined)
+                    : undefined;
+                console.log(`IdeService: openDiff response — ${applied ? `APPLIED (FILE_SAVED, ${savedContent?.length ?? 0} chars)` : 'REJECTED'}`.cyan);
+                this.onEvent({type: applied ? 'ide_diff_applied' : 'ide_diff_rejected', savedContent});
+            },
+            reject: (err: Error): void => {
+                clearTimeout(timeout);
+                this.pendingDiffId = null;
+                console.warn(`IdeService: openDiff error — ${err.message}`.yellow);
+            },
+            timeout,
+        });
+
+        console.log(`IdeService: openDiff → path: ${filePath}, newContent length: ${newContent.length}, tab: ${args.tab_name} (id: ${id})`.cyan);
         this.sendRaw({jsonrpc: '2.0', id, method: 'tools/call', params: {name: 'openDiff', arguments: args}});
+    }
+
+    /** Cancel any pending openDiff call — called when the web UI approves/denies */
+    cancelPendingDiff(): void {
+        if (this.pendingDiffId !== null) {
+            const pending: IPendingCall | undefined = this.pendingCalls.get(this.pendingDiffId);
+            if (pending) {
+                clearTimeout(pending.timeout);
+                this.pendingCalls.delete(this.pendingDiffId);
+            }
+            this.pendingDiffId = null;
+        }
     }
 
     /** Close a diff/editor tab in the IDE (fire-and-forget). Accepts tab_name from openDiff or absolute path. */
