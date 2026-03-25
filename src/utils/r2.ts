@@ -1,7 +1,11 @@
 import "colors";
+import convert from "heic-convert";
 import {_Object, DeleteObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {IAttachment, IAttachmentMeta, IBuildContentBlocksResult} from "../types/ws";
 import {CLOUDFLARE_ACCESS_KEY_ID, CLOUDFLARE_R2_BUCKET_NAME, CLOUDFLARE_R2_ENDPOINT, CLOUDFLARE_R2_PUBLIC_URL, CLOUDFLARE_SECRET_ACCESS_KEY} from "../config/config";
+
+/** MIME types that require conversion to JPEG before upload (Claude API only accepts JPEG/PNG/GIF/WebP) */
+const HEIC_MIME_TYPES: Set<string> = new Set(['image/heic', 'image/heif']);
 
 /** S3-compatible client configured for Cloudflare R2 */
 const r2Client: S3Client = new S3Client({
@@ -72,16 +76,32 @@ async function buildContentBlocks(attachments: IAttachment[], sessionId: string,
     const attachmentMeta: IAttachmentMeta[] = [];
 
     for (const attachment of attachments) {
-        const url: string = await uploadToR2(attachment, sessionId);
-        attachmentMeta.push({name: attachment.name, mimeType: attachment.mimeType, size: attachment.size, r2Url: url});
+        // Convert HEIC/HEIF → JPEG before upload — Claude API only accepts JPEG/PNG/GIF/WebP
+        let effectiveAttachment: IAttachment = attachment;
+        if (HEIC_MIME_TYPES.has(attachment.mimeType.toLowerCase())) {
+            console.log(`R2: Converting ${attachment.name} (${attachment.mimeType}) → JPEG`.cyan);
+            const inputBuffer: Buffer = Buffer.from(attachment.data, 'base64');
+            const jpegBuffer: Buffer = Buffer.from(await convert({buffer: inputBuffer, format: 'JPEG', quality: 0.9}));
+            const convertedName: string = attachment.name.replace(/\.heic$/i, '.jpg').replace(/\.heif$/i, '.jpg');
+            effectiveAttachment = {
+                name: convertedName,
+                mimeType: 'image/jpeg',
+                data: jpegBuffer.toString('base64'),
+                size: jpegBuffer.length,
+            };
+            console.log(`R2: Converted ${attachment.name} (${(inputBuffer.length / 1024).toFixed(1)} KB) → ${convertedName} (${(jpegBuffer.length / 1024).toFixed(1)} KB)`.cyan);
+        }
 
-        if (attachment.mimeType.startsWith('image/')) {
+        const url: string = await uploadToR2(effectiveAttachment, sessionId);
+        attachmentMeta.push({name: effectiveAttachment.name, mimeType: effectiveAttachment.mimeType, size: effectiveAttachment.size, r2Url: url});
+
+        if (effectiveAttachment.mimeType.startsWith('image/')) {
             blocks.push({type: 'image', source: {type: 'url', url}});
-        } else if (attachment.mimeType === 'application/pdf') {
+        } else if (effectiveAttachment.mimeType === 'application/pdf') {
             blocks.push({type: 'document', source: {type: 'url', url}});
         } else {
             // Text/code files: send URL reference — Claude uses WebFetch to read content
-            blocks.push({type: 'text', text: `File attached: ${attachment.name} — ${url}`});
+            blocks.push({type: 'text', text: `File attached: ${effectiveAttachment.name} — ${url}`});
         }
     }
 

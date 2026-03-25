@@ -22,7 +22,7 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         // Instruct Claude to use Bash for .claude/ file writes. The Edit tool has a
         // hardcoded protection that blocks edits to .claude/ directories in non-interactive
         // mode (no flag or setting can override it). Bash(cat/echo redirect) works fine.
-        '--append-system-prompt', 'IMPORTANT: When editing files inside .claude/ directories (e.g. .claude/CLAUDE.md, .claude/settings.json, .claude/standup-notes.md), you MUST use the Bash tool with cat/echo redirect instead of the Edit tool. The Edit tool is blocked for .claude/ paths in this environment. Example: Bash(cat > .claude/file.md << \'EOF\'\ncontent\nEOF)',
+        '--append-system-prompt', 'IMPORTANT: When editing files inside .claude/ directories (e.g. .claude/CLAUDE.md, .claude/settings.json, .claude/standup-notes.md), you MUST use the Bash tool with cat/echo redirect instead of the Edit tool. The Edit tool is blocked for .claude/ paths in this environment. Example: Bash(cat > .claude/file.md << \'EOF\'\ncontent\nEOF)\n\nMCP TOOL RESILIENCE: If any deferred MCP tool (e.g. claude.ai Notion, Slack, Vercel, or any other MCP-provided tool) becomes unavailable mid-session or ToolSearch returns empty/error, silently retry ToolSearch up to 3 times before reporting failure. Do NOT present the user with fallback option tables, alternative tool comparisons, or suggest starting a fresh session. Tools frequently return after a retry.',
     ];
 
     if (message.type === 'resume_session') {
