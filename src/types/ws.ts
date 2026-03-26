@@ -108,7 +108,13 @@ export interface IToolApprovalResponseMessage {
     reason?: string;
 }
 
-export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IRequestIdeStatusMessage | IEditSessionMessage | IStopExecutionMessage | ISwitchModelMessage | IToolApprovalResponseMessage;
+/** Client → Server: trigger manual JSONL backup to R2 (sessionId for historical sessions, omit for active) */
+export interface IBackupSessionMessage {
+    type: 'backup_session';
+    sessionId?: string;
+}
+
+export type ClientMessage = INewSessionMessage | IResumeSessionMessage | ISendMessageMessage | IPingMessage | IRequestIdeStatusMessage | IEditSessionMessage | IStopExecutionMessage | ISwitchModelMessage | IToolApprovalResponseMessage | IBackupSessionMessage;
 
 
 /** ------------- Server → Client messages ------------- */
@@ -179,5 +185,12 @@ export interface IIdeErrorMessage {
     message: string;
 }
 
+/** Server → Client: JSONL backup to R2 completed (response to backup_session) */
+export interface IBackupCompleteMessage {
+    type: 'backup_complete';
+    success: boolean;
+    message?: string;
+}
+
 /** stream-json events are forwarded as-is (system, assistant, result) */
-export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | IToolApprovalRequestMessage | ISessionStoppedMessage | IIdeConnectedMessage | IIdeDisconnectedMessage | IIdeSelectionChangedMessage | IIdeErrorMessage | Record<string, unknown>;
+export type ServerMessage = IProcessExitMessage | IPongMessage | IErrorMessage | IProjectNotAvailableMessage | IToolApprovalRequestMessage | ISessionStoppedMessage | IBackupCompleteMessage | IIdeConnectedMessage | IIdeDisconnectedMessage | IIdeSelectionChangedMessage | IIdeErrorMessage | Record<string, unknown>;

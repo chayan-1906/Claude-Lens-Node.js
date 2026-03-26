@@ -1,7 +1,9 @@
 import "colors";
 import convert from "heic-convert";
-import {_Object, DeleteObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
+import {IR2Config} from "../types/setup";
+import {getR2Config} from "./localConfig";
 import {IAttachment, IAttachmentMeta, IBuildContentBlocksResult} from "../types/ws";
+import {_Object, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 
 /** MIME types that require conversion to JPEG before upload (Claude API only accepts JPEG/PNG/GIF/WebP) */
 const HEIC_MIME_TYPES: Set<string> = new Set(['image/heic', 'image/heif']);
@@ -10,17 +12,22 @@ const HEIC_MIME_TYPES: Set<string> = new Set(['image/heic', 'image/heif']);
 let r2Client: S3Client | null = null;
 
 /**
- * (Re-)initialize the S3Client from current process.env values.
- * Called on server startup after injecting R2 config, and again
- * whenever credentials are updated via the Setup UI.
+ * (Re-)initialize the S3Client from ~/.claude-lens/config.json R2 credentials.
+ * Called on server startup and again whenever credentials are updated via the Setup UI.
  */
 function initR2Client(): void {
+    const config: IR2Config | null = getR2Config();
+    if (!config) {
+        console.debug('DEBUG: R2 S3Client not initialized — no R2 config'.cyan);
+        r2Client = null;
+        return;
+    }
     r2Client = new S3Client({
         region: 'auto',
-        endpoint: process.env.CLOUDFLARE_R2_ENDPOINT,
+        endpoint: config.endpoint,
         credentials: {
-            accessKeyId: process.env.CLOUDFLARE_ACCESS_KEY_ID ?? '',
-            secretAccessKey: process.env.CLOUDFLARE_SECRET_ACCESS_KEY ?? '',
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey,
         },
     });
     console.debug('DEBUG: R2 S3Client initialized'.cyan);
@@ -39,17 +46,18 @@ function getR2Client(): S3Client {
  * Returns the publicly accessible URL for the uploaded object.
  */
 async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<string> {
+    const config: IR2Config | null = getR2Config();
     const key: string = `${sessionId}/${Date.now()}-${attachment.name}`;
     const buffer: Buffer = Buffer.from(attachment.data, 'base64');
 
     await getR2Client().send(new PutObjectCommand({
-        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
+        Bucket: config!.bucketName,
         Key: key,
         Body: buffer,
         ContentType: attachment.mimeType,
     }));
 
-    const publicUrl: string = `${process.env.CLOUDFLARE_R2_PUBLIC_URL}/${key}`;
+    const publicUrl: string = `${config!.publicUrl}/${key}`;
     console.log(`R2: Uploaded ${attachment.name} (${(buffer.length / 1024).toFixed(1)} KB) → ${publicUrl}`.green);
     return publicUrl;
 }
@@ -59,8 +67,9 @@ async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<s
  * Called when a session is deleted from Claude Lens.
  */
 async function deleteSessionAttachments(sessionId: string): Promise<number> {
+    const config: IR2Config | null = getR2Config();
     const listed = await getR2Client().send(new ListObjectsV2Command({
-        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
+        Bucket: config!.bucketName,
         Prefix: `${sessionId}/`,
     }));
 
@@ -69,7 +78,7 @@ async function deleteSessionAttachments(sessionId: string): Promise<number> {
     }
 
     await getR2Client().send(new DeleteObjectsCommand({
-        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
+        Bucket: config!.bucketName,
         Delete: {
             Objects: listed.Contents.map((object: _Object) => ({Key: object.Key!})),
         },
@@ -130,4 +139,53 @@ async function buildContentBlocks(attachments: IAttachment[], sessionId: string,
     return {blocks, attachmentMeta};
 }
 
-export {initR2Client, uploadToR2, deleteSessionAttachments, buildContentBlocks};
+/** Check if R2 credentials are configured in ~/.claude-lens/config.json */
+function isR2Configured(): boolean {
+    return getR2Config() !== null;
+}
+
+/**
+ * Upload a session JSONL backup to R2 at `<sessionId>/<sessionId>.jsonl`.
+ * Best-effort: returns the public URL on success, or null if R2 is unconfigured / upload fails.
+ * Stored under the same session prefix as attachments — deleteSessionAttachments() cleans up automatically.
+ */
+async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffer): Promise<string | null> {
+    const config: IR2Config | null = getR2Config();
+    if (!config) return null;
+    try {
+        const key: string = `${sessionId}/${sessionId}.jsonl`;
+        await getR2Client().send(new PutObjectCommand({
+            Bucket: config.bucketName,
+            Key: key,
+            Body: jsonlContent,
+            ContentType: 'application/x-ndjson',
+        }));
+        const url: string = `${config.publicUrl}/${key}`;
+        console.log(`R2: JSONL backup uploaded — ${sessionId} (${(Buffer.byteLength(jsonlContent) / 1024).toFixed(1)} KB)`.green);
+        return url;
+    } catch (err: unknown) {
+        console.warn(`R2: JSONL backup upload failed — ${err}`.yellow);
+        return null;
+    }
+}
+
+/**
+ * Download a session JSONL backup from R2.
+ * Returns the JSONL content string if found, or null if not found / R2 unconfigured / error.
+ */
+async function downloadJsonlBackup(sessionId: string): Promise<string | null> {
+    const config: IR2Config | null = getR2Config();
+    if (!config) return null;
+    try {
+        const key: string = `${sessionId}/${sessionId}.jsonl`;
+        const resp = await getR2Client().send(new GetObjectCommand({
+            Bucket: config.bucketName,
+            Key: key,
+        }));
+        return await resp.Body?.transformToString() ?? null;
+    } catch {
+        return null;
+    }
+}
+
+export {initR2Client, isR2Configured, uploadToR2, uploadJsonlBackup, downloadJsonlBackup, deleteSessionAttachments, buildContentBlocks};

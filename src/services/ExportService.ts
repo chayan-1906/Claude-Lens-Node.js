@@ -3,6 +3,7 @@ import path from "path";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import {APP_VERSION} from "../config/config";
+import {uploadJsonlBackup} from "../utils/r2";
 import MessageModel, {IMessage} from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
 import {IExportManifest, IExportResult, IExportServiceParams, IManifestSessionEntry} from "../types/export";
@@ -55,6 +56,9 @@ class ExportService {
             console.debug('DEBUG: Session JSONL built'.cyan, {sessionId: session.sessionId, messages: messages.length});
             const jsonlContent: string = jsonlLines.join('\n');
             archive.append(jsonlContent, {name: `projects/${session.sessionId}.jsonl`});
+
+            // Trigger #5: best-effort R2 backup on export (fire-and-forget)
+            uploadJsonlBackup(session.sessionId, jsonlContent).catch(() => {});
 
             sessionIndex.push({
                 sessionId: session.sessionId,

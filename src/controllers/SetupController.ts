@@ -989,14 +989,7 @@ const saveR2ConfigController = async (req: Request, res: Response) => {
         // Save to ~/.claude-lens/config.json
         saveR2Config(r2Config);
 
-        // Inject into process.env so r2.ts picks them up
-        process.env.CLOUDFLARE_ACCESS_KEY_ID = r2Config.accessKeyId;
-        process.env.CLOUDFLARE_SECRET_ACCESS_KEY = r2Config.secretAccessKey;
-        process.env.CLOUDFLARE_R2_ENDPOINT = r2Config.endpoint;
-        process.env.CLOUDFLARE_R2_PUBLIC_URL = r2Config.publicUrl;
-        process.env.CLOUDFLARE_R2_BUCKET_NAME = r2Config.bucketName;
-
-        // Re-initialize S3Client with new credentials
+        // Re-initialize S3Client with new credentials (reads from config.json)
         initR2Client();
 
         console.log('SUCCESS: R2 config saved'.bgGreen.bold);

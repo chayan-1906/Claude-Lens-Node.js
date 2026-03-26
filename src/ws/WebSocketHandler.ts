@@ -9,13 +9,13 @@ import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IdeService} from "./IdeService";
 import MemoryModel from "../models/Memory";
-import {buildContentBlocks} from "../utils/r2";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
+import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
 import {resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
 import {
@@ -27,7 +27,7 @@ import {
     IResumeSessionMessage,
     ISendMessageMessage,
     ISwitchModelMessage,
-    IToolApprovalResponseMessage
+    IToolApprovalResponseMessage,
 } from "../types/ws";
 
 /**
@@ -604,6 +604,46 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         let lastWrittenUuid: string | null = null;
         let pendingAttachmentMeta: IAttachmentMeta[] | null = null;
 
+        // --- JSONL backup state: debounce, size threshold tracking, idle timer ---
+        let lastBackupTimestamp: number = 0;
+        let lastSizeThreshold: number = 0;
+        let idleBackupTimer: ReturnType<typeof setTimeout> | null = null;
+
+        /**
+         * Best-effort JSONL backup to R2 — reads local JSONL file, uploads, respects 30s debounce.
+         * Async + non-blocking: callers fire-and-forget (catch errors internally).
+         */
+        const backupSessionJsonl = async (sessionId: string, reason: string): Promise<void> => {
+            const now: number = Date.now();
+            if (now - lastBackupTimestamp < 30_000) {
+                console.log(`R2: Skipping JSONL backup (debounce) — ${reason}`.cyan);
+                return;
+            }
+            if (!activeProjectDir) return;
+            const hash: string = toProjectDirHash(activeProjectDir);
+            const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${sessionId}.jsonl`);
+            if (!fs.existsSync(jsonlPath)) return;
+            try {
+                const content: Buffer = fs.readFileSync(jsonlPath);
+                await uploadJsonlBackup(sessionId, content);
+                lastBackupTimestamp = Date.now();
+                console.log(`R2: JSONL backup complete — trigger: ${reason}`.green);
+            } catch (error: unknown) {
+                console.warn(`R2: JSONL backup failed — ${reason}: ${error}`.yellow);
+            }
+        }
+
+        /** Reset the idle backup timer — fires once after 5 minutes of no user messages */
+        const resetIdleBackupTimer = (): void => {
+            if (idleBackupTimer) clearTimeout(idleBackupTimer);
+            if (!activeSessionId) return;
+            const sid: string = activeSessionId;
+            idleBackupTimer = setTimeout(() => {
+                idleBackupTimer = null;
+                backupSessionJsonl(sid, 'idle_5m');
+            }, 5 * 60 * 1000);
+        }
+
         /** Register session → WS mapping when system event provides the session_id.
          *  Also triggers direct-write session upsert so messages can be saved immediately. */
         const onSystemEvent = (event: Record<string, unknown>): void => {
@@ -629,6 +669,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 activeProjectDir = (event.cwd as string) || null;
                 registerSession(activeSessionId, webSocket);
                 upsertSessionOnInit(event);
+
+                // Trigger #4: start idle backup timer when session begins
+                resetIdleBackupTimer();
 
                 // Register IDE openDiff hook — fires when a tool approval is requested,
                 // opening the diff in IntelliJ in sync with the web UI DiffView prompt.
@@ -931,7 +974,30 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             const localProjectDirHash: string = toProjectDirHash(localRawProjectDir);
                             console.log(`WebSocket: [TRACE] Path resolution — canonical: ${session.rawProjectDir}, local: ${localRawProjectDir}, localHash: ${localProjectDirHash}`.cyan);
 
-                            const localAvailable: boolean = isLocalSessionAvailable(localProjectDirHash, clientMessage.sessionId);
+                            let localAvailable: boolean = isLocalSessionAvailable(localProjectDirHash, clientMessage.sessionId);
+
+                            // Restore: if local JSONL is missing/broken, try R2 backup before MongoDB reconstruction
+                            if (!localAvailable) {
+                                console.log(`WebSocket: [TRACE] Local JSONL unavailable/broken — trying R2 restore`.cyan);
+                                try {
+                                    const r2Content: string | null = await downloadJsonlBackup(clientMessage.sessionId);
+                                    if (r2Content) {
+                                        const jsonlDir: string = path.join(process.env.HOME || '~', '.claude', 'projects', localProjectDirHash);
+                                        fs.mkdirSync(jsonlDir, {recursive: true});
+                                        fs.writeFileSync(path.join(jsonlDir, `${clientMessage.sessionId}.jsonl`), r2Content);
+                                        console.log(`WebSocket: [TRACE] Restored JSONL from R2 backup (${(Buffer.byteLength(r2Content) / 1024).toFixed(1)} KB)`.green);
+                                        localAvailable = isLocalSessionAvailable(localProjectDirHash, clientMessage.sessionId);
+                                        if (localAvailable) {
+                                            console.log('WebSocket: [TRACE] R2-restored JSONL is valid — skipping reconstruction'.green);
+                                        } else {
+                                            console.warn('WebSocket: [TRACE] R2-restored JSONL is invalid — falling through to reconstruction'.yellow);
+                                        }
+                                    }
+                                } catch (r2Error: unknown) {
+                                    console.warn(`WebSocket: [TRACE] R2 restore failed — ${r2Error}`.yellow);
+                                }
+                            }
+
                             if (!localAvailable) {
                                 console.log(`WebSocket: [TRACE] Local JSONL unavailable/broken — reconstruction path`.cyan);
                                 if (!messages || messages.length === 0) {
@@ -1031,6 +1097,22 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         // Also persist AFTER sync for new sessions (sync creates the session first).
                         // Both calls are safe: zero-guard skips rejected results, $set is idempotent.
                         persistResultContext(resultEvent);
+
+                        // Trigger #3: size threshold backup (every 5MB boundary crossed)
+                        if (activeSessionId && activeProjectDir) {
+                            const hash: string = toProjectDirHash(activeProjectDir);
+                            const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${activeSessionId}.jsonl`);
+                            try {
+                                const stats: fs.Stats = fs.statSync(jsonlPath);
+                                const currentThreshold: number = Math.floor(stats.size / (5 * 1024 * 1024));
+                                if (currentThreshold > lastSizeThreshold) {
+                                    lastSizeThreshold = currentThreshold;
+                                    backupSessionJsonl(activeSessionId, `size_threshold_${currentThreshold * 5}MB`);
+                                }
+                            } catch { /* file not yet written — skip */
+                            }
+                        }
+
                         scheduleSync(async (): Promise<void> => {
                             await autoSyncWebUI();
                             await persistResultContext(resultEvent);
@@ -1064,6 +1146,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 }
 
                 case 'edit_session': {
+                    // Trigger #1: snapshot JSONL before destructive edit (fire-and-forget)
+                    if (activeSessionId) {
+                        backupSessionJsonl(activeSessionId, 'before_edit_session');
+                    }
+
                     // Kill existing claude process if active (live chat edit scenario)
                     if (claudeProcess) {
                         console.log('WebSocket: edit_session — killing active claude process before forking'.yellow);
@@ -1155,6 +1242,22 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     console.log(`WebSocket: edit_session — spawning fresh session (cwd: ${spawnMsg.projectDir}, contextUserCount: ${contextUserCount})`.cyan);
                     claudeProcess = spawnClaude(spawnMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
+
+                        // Trigger #3: size threshold backup (every 5MB boundary crossed)
+                        if (activeSessionId && activeProjectDir) {
+                            const hash: string = toProjectDirHash(activeProjectDir);
+                            const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${activeSessionId}.jsonl`);
+                            try {
+                                const stats: fs.Stats = fs.statSync(jsonlPath);
+                                const currentThreshold: number = Math.floor(stats.size / (5 * 1024 * 1024));
+                                if (currentThreshold > lastSizeThreshold) {
+                                    lastSizeThreshold = currentThreshold;
+                                    backupSessionJsonl(activeSessionId, `size_threshold_${currentThreshold * 5}MB`);
+                                }
+                            } catch { /* file not yet written — skip */
+                            }
+                        }
+
                         scheduleSync(async (): Promise<void> => {
                             await afterEditSync();
                             await persistResultContext(resultEvent);
@@ -1216,6 +1319,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         console.log('WebSocket: Sending follow-up message to existing claude process'.cyan);
                         sendMessage(claudeProcess, sendMsg.text);
                     }
+
+                    // Trigger #4: reset idle backup timer on every user message
+                    resetIdleBackupTimer();
                     break;
                 }
 
@@ -1254,6 +1360,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         break;
                     }
 
+                    // Trigger #2: snapshot JSONL before kill + respawn (fire-and-forget)
+                    backupSessionJsonl(activeSessionId, 'before_switch_model');
+
                     // Kill existing process
                     killClaudeProcess(claudeProcess);
                     claudeProcess = null;
@@ -1273,6 +1382,22 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     claudeProcess = spawnClaude(resumeMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
+
+                        // Trigger #3: size threshold backup (every 5MB boundary crossed)
+                        if (activeSessionId && activeProjectDir) {
+                            const hash: string = toProjectDirHash(activeProjectDir);
+                            const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${activeSessionId}.jsonl`);
+                            try {
+                                const stats: fs.Stats = fs.statSync(jsonlPath);
+                                const currentThreshold: number = Math.floor(stats.size / (5 * 1024 * 1024));
+                                if (currentThreshold > lastSizeThreshold) {
+                                    lastSizeThreshold = currentThreshold;
+                                    backupSessionJsonl(activeSessionId, `size_threshold_${currentThreshold * 5}MB`);
+                                }
+                            } catch { /* file not yet written — skip */
+                            }
+                        }
+
                         scheduleSync(async (): Promise<void> => {
                             await autoSyncWebUI();
                             await persistResultContext(resultEvent);
@@ -1327,6 +1452,50 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     break;
                 }
 
+                case 'backup_session': {
+                    const backupMsg = clientMessage as { type: 'backup_session'; sessionId?: string };
+                    const backupSessionId: string | null = activeSessionId ?? backupMsg.sessionId ?? null;
+
+                    if (!backupSessionId) {
+                        sendError(webSocket, 'No session to backup!');
+                        break;
+                    }
+
+                    // Trigger #7: manual backup button — supports both active and historical sessions
+                    const doBackup = async (): Promise<void> => {
+                        // For active sessions, backupSessionJsonl already knows the projectDir
+                        if (activeSessionId && backupSessionId === activeSessionId) {
+                            await backupSessionJsonl(activeSessionId, 'manual_button');
+                            return;
+                        }
+
+                        // For historical sessions: look up projectDir from MongoDB, read local JSONL, upload
+                        const {session: backupSession} = await SessionService.getSessionBySessionId(backupSessionId);
+                        if (!backupSession) throw new Error('Session not found in MongoDB');
+
+                        const localRawProjectDir: string = resolveLocalPath(backupSession.rawProjectDir);
+                        const hash: string = toProjectDirHash(localRawProjectDir);
+                        const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${backupSessionId}.jsonl`);
+
+                        if (!fs.existsSync(jsonlPath)) throw new Error('Local JSONL file not found');
+
+                        const content: Buffer = fs.readFileSync(jsonlPath);
+                        await uploadJsonlBackup(backupSessionId, content);
+                        console.log(`R2: JSONL backup complete — trigger: manual_button (historical)`.green);
+                    };
+
+                    doBackup().then(() => {
+                        if (webSocket.readyState === WebSocket.OPEN) {
+                            webSocket.send(JSON.stringify({type: 'backup_complete', success: true}));
+                        }
+                    }).catch((err: unknown) => {
+                        if (webSocket.readyState === WebSocket.OPEN) {
+                            webSocket.send(JSON.stringify({type: 'backup_complete', success: false, message: `Backup failed: ${err}`}));
+                        }
+                    });
+                    break;
+                }
+
                 default: {
                     sendError(webSocket, `Unknown message type: ${(clientMessage as any).type}`);
                 }
@@ -1335,6 +1504,18 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
         webSocket.on('close', () => {
             console.log('WebSocket: Client disconnected'.yellow);
+
+            // Trigger #6: snapshot JSONL on session close (fire-and-forget)
+            if (activeSessionId) {
+                backupSessionJsonl(activeSessionId, 'ws_close');
+            }
+
+            // Clear idle backup timer
+            if (idleBackupTimer) {
+                clearTimeout(idleBackupTimer);
+                idleBackupTimer = null;
+            }
+
             if (activeSessionId) {
                 cleanupSession(activeSessionId);
                 activeSessionId = null;

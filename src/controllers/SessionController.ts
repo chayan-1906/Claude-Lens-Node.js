@@ -1,8 +1,11 @@
 import "colors";
+import fs from "fs";
+import path from "path";
 import {Request, Response} from "express";
 import {ApiResponse} from "../utils/ApiResponse";
 import {ESessionSource} from "../models/Session";
 import SessionService from "../services/SessionService";
+import {resolveLocalPath, toProjectDirHash} from "../utils/resolveProjectDir";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteSessionParams, IGetSessionParams, IStubMessagesParams, IUpdateSessionParams} from "../types/session";
 
@@ -80,12 +83,19 @@ const getSessionController = async (req: Request, res: Response) => {
             return;
         }
 
-        console.log('SUCCESS: Session fetched'.bgGreen.bold, {sessionId});
+        // Check if the local JSONL file exists on disk for this session
+        const localRawProjectDir: string = resolveLocalPath(session.rawProjectDir);
+        const localProjectDirHash: string = toProjectDirHash(localRawProjectDir);
+        const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', localProjectDirHash, `${session.sessionId}.jsonl`);
+        const localJsonlAvailable: boolean = fs.existsSync(jsonlPath);
+
+        console.log('SUCCESS: Session fetched'.bgGreen.bold, {sessionId, localJsonlAvailable});
         res.status(200).send(new ApiResponse({
             success: true,
             message: 'Session has been fetched!',
             session,
             messages,
+            localJsonlAvailable,
         }));
     } catch (error: any) {
         console.error('Controller Error: getSessionController failed'.red.bold, error);
