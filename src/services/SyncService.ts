@@ -9,6 +9,7 @@ import SessionModel from "../models/Session";
 import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
+import {resolveCanonicalPath, toProjectDirHash, resolveProjectDirHash} from "../utils/resolveProjectDir";
 import {ALL_SYNC_TARGETS, IParsedFile, IParsedMessage, ISyncMemoriesResponse, ISyncParams, ISyncResponse, ISyncTasksResponse, RawTask, SyncTarget} from "../types/sync";
 
 // --- Constants ---
@@ -156,13 +157,17 @@ class SyncService {
      * Upserts session, incrementally inserts only new messages
      */
     private static async syncFile(parsedFile: IParsedFile): Promise<number> {
+        // Resolve path aliases — normalizes /Volumes/... and /Users/... to a single canonical path
+        const canonicalRaw: string = resolveCanonicalPath(parsedFile.rawProjectDir);
+        const canonicalHash: string = toProjectDirHash(canonicalRaw);
+
         // Check if the session already has a user-renamed title — don't overwrite it
         const existingSession = await SessionModel.findOne({sessionId: parsedFile.sessionId}, {titleRenamed: 1}).lean();
 
         const updateFields: Record<string, unknown> = {
             aiModel: parsedFile.aiModel,
-            projectDir: parsedFile.projectDir,
-            rawProjectDir: parsedFile.rawProjectDir,
+            projectDir: canonicalHash,
+            rawProjectDir: canonicalRaw,
             gitBranch: parsedFile.gitBranch,
             slug: parsedFile.slug,
         };
@@ -312,7 +317,8 @@ class SyncService {
         let updated: number = 0;
 
         for (const dir of dirs) {
-            const projectDirName: string = path.basename(dir);
+            // Resolve path aliases for memory — the directory name is a hash, resolve to canonical hash
+            const projectDirName: string = resolveProjectDirHash(path.basename(dir));
             const memoryDir: string = path.join(dir, 'memory');
 
             if (!fs.existsSync(memoryDir) || !fs.statSync(memoryDir).isDirectory()) {

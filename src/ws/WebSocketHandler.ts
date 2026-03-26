@@ -16,6 +16,7 @@ import MessageModel, {IMessage} from "../models/Message";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
+import {resolveLocalPath, toProjectDirHash} from "../utils/resolveProjectDir";
 import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
 import {
     ClientMessage,
@@ -145,9 +146,10 @@ function repairOrphanedToolUse(projectDir: string, sessionId: string): void {
  * Note: tool_use/tool_result blocks and thinking blocks may be absent
  * if they were stripped during the original sync.
  */
-function reconstructAndSaveJsonl(session: ISession, messages: IMessage[]): void {
+function reconstructAndSaveJsonl(session: ISession, messages: IMessage[], localProjectDirHash?: string): void {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
-    const sessionDir: string = path.join(claudeProjectsDir, session.projectDir);
+    const effectiveHash: string = localProjectDirHash ?? session.projectDir;
+    const sessionDir: string = path.join(claudeProjectsDir, effectiveHash);
     const jsonlPath: string = path.join(sessionDir, `${session.sessionId}.jsonl`);
 
     fs.mkdirSync(sessionDir, {recursive: true});
@@ -919,7 +921,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         if (error || !session) {
                             console.log(`WebSocket: [TRACE] DB error or session not found — falling through to let claude handle it`.cyan);
                         } else {
-                            const localAvailable: boolean = isLocalSessionAvailable(session.projectDir, clientMessage.sessionId);
+                            // Cross-machine resume: the canonical rawProjectDir may not exist
+                            // on this machine (e.g. /Users/... on Mac Mini is /Volumes/... on
+                            // MacBook Air). Resolve to whichever path mapping variant actually
+                            // exists locally, and compute the matching hash for JSONL lookup.
+                            const localRawProjectDir: string = resolveLocalPath(session.rawProjectDir);
+                            const localProjectDirHash: string = toProjectDirHash(localRawProjectDir);
+                            console.log(`WebSocket: [TRACE] Path resolution — canonical: ${session.rawProjectDir}, local: ${localRawProjectDir}, localHash: ${localProjectDirHash}`.cyan);
+
+                            const localAvailable: boolean = isLocalSessionAvailable(localProjectDirHash, clientMessage.sessionId);
                             if (!localAvailable) {
                                 console.log(`WebSocket: [TRACE] Local JSONL unavailable/broken — reconstruction path`.cyan);
                                 if (!messages || messages.length === 0) {
@@ -934,7 +944,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                     console.log(`WebSocket: [TRACE]   [${i}] role=${m.role} uuid=${m.uuid} content=${contentSummary}`.cyan);
                                 });
                                 try {
-                                    reconstructAndSaveJsonl(session, messages);
+                                    reconstructAndSaveJsonl(session, messages, localProjectDirHash);
                                 } catch (reconstructionError: unknown) {
                                     sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
                                     break;
@@ -947,26 +957,26 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 }
 
                                 try {
-                                    await reconstructAndSaveMemory(session.projectDir);
+                                    await reconstructAndSaveMemory(localProjectDirHash);
                                 } catch (memoryError: unknown) {
                                     console.error(`WebSocket: Failed to reconstruct memory files — ${memoryError}`.red);
                                 }
 
-                                // Set cwd so claude --resume hashes the correct project dir
-                                clientMessage.projectDir = session.rawProjectDir;
+                                // Set cwd to the local path so claude --resume hashes correctly
+                                clientMessage.projectDir = localRawProjectDir;
                                 console.log(`WebSocket: [TRACE] Reconstruction done — cwd set to: ${clientMessage.projectDir}`.cyan);
                             } else {
                                 // Set cwd even when local JSONL is valid — claude --resume hashes cwd
-                                // to locate the session file, so it must match the original project dir
-                                clientMessage.projectDir = session.rawProjectDir;
-                                console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${session.rawProjectDir}`.cyan);
+                                // to locate the session file, so it must match the local project dir
+                                clientMessage.projectDir = localRawProjectDir;
+                                console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${localRawProjectDir}`.cyan);
                             }
 
                             // Repair: strip trailing orphaned tool_use entries from the JSONL.
                             // The Anthropic API returns 400 if an assistant tool_use has no matching tool_result.
-                            repairOrphanedToolUse(session.projectDir, clientMessage.sessionId);
+                            repairOrphanedToolUse(localProjectDirHash, clientMessage.sessionId);
 
-                            // Guard: verify rawProjectDir actually exists on disk before spawning.
+                            // Guard: verify the resolved local project dir exists on disk before spawning.
                             // Without this, spawn('claude', args, {cwd: missing_dir}) crashes with ENOENT.
                             if (!fs.existsSync(clientMessage.projectDir!)) {
                                 console.warn(`WebSocket: [TRACE] projectDir does not exist on disk: ${clientMessage.projectDir}`.yellow);

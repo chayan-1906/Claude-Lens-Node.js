@@ -8,10 +8,19 @@ export interface IMongoConfiguration {
     lastConnectedAt?: string;
 }
 
+/** A single path mapping — maps multiple absolute paths to one canonical path */
+export interface IPathMapping {
+    id: string;              // UUID — unique key
+    label: string;           // Human-readable, e.g. "claude-lens (NodeJs)"
+    paths: string[];         // ALL known absolute paths for the same project
+    canonicalPath: string;   // MUST be one of the entries in paths[]
+}
+
 /** Current config schema with multiple configurations */
 export interface ILocalConfig {
     configurations: IMongoConfiguration[];
     activeConfigId: string;
+    pathMappings: IPathMapping[];
 }
 
 /** POST /api/v1/setup/configurations — request body */
@@ -33,4 +42,23 @@ export interface IEditConfigurationBody {
 /** Route params for configuration endpoints that require :configId */
 export interface IConfigIdParams {
     configId?: string;
+}
+
+/** POST /api/v1/setup/path-mappings — request body */
+export interface IAddPathMappingBody {
+    label?: string;
+    paths?: string[];
+    canonicalPath?: string;
+}
+
+/** PUT /api/v1/setup/path-mappings/:mappingId — request body */
+export interface IEditPathMappingBody {
+    label?: string;
+    paths?: string[];
+    canonicalPath?: string;
+}
+
+/** Route params for path mapping endpoints that require :mappingId */
+export interface IMappingIdParams {
+    mappingId?: string;
 }
