@@ -2,14 +2,15 @@ import "colors";
 import mongoose from "mongoose";
 import {randomUUID} from "crypto";
 import {Request, Response} from "express";
+import {initR2Client} from "../utils/r2";
 import MemoryModel from "../models/Memory";
 import SessionModel from "../models/Session";
 import {connectDB} from "../config/connectDB";
 import {ApiResponse} from "../utils/ApiResponse";
-import {TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {toProjectDirHash} from "../utils/resolveProjectDir";
+import {R2_ENDPOINT_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {generateRandomColor, getLocalConfig, saveLocalConfig} from "../utils/localConfig";
+import {generateRandomColor, getLocalConfig, getR2Config, saveLocalConfig, saveR2Config} from "../utils/localConfig";
 import type {
     IAddConfigurationBody,
     IAddPathMappingBody,
@@ -19,7 +20,9 @@ import type {
     ILocalConfig,
     IMappingIdParams,
     IMongoConfiguration,
-    IPathMapping
+    IPathMapping,
+    IR2Config,
+    ISaveR2ConfigBody,
 } from "../types/setup";
 
 /**
@@ -32,14 +35,17 @@ const getSetupStatusController = async (req: Request, res: Response) => {
     try {
         const localConfig: ILocalConfig | null = getLocalConfig();
         const dbConnected: boolean = mongoose.connection.readyState === 1;
-        console.debug('DEBUG: DB readyState'.cyan, {readyState: mongoose.connection.readyState, dbConnected, hasLocalConfig: localConfig !== null});
+        const r2Config: IR2Config | null = getR2Config();
+        const r2Configured: boolean = r2Config !== null;
+        console.debug('DEBUG: DB readyState'.cyan, {readyState: mongoose.connection.readyState, dbConnected, hasLocalConfig: localConfig !== null, r2Configured});
 
-        console.log('SUCCESS: Status fetched'.bgGreen.bold, {configured: dbConnected, hasLocalConfig: localConfig !== null});
+        console.log('SUCCESS: Status fetched'.bgGreen.bold, {configured: dbConnected, hasLocalConfig: localConfig !== null, r2Configured});
         res.status(200).send(new ApiResponse({
             success: true,
             message: 'Status fetched!',
             configured: dbConnected,
             hasLocalConfig: localConfig !== null,
+            r2Configured,
         }));
     } catch (error: any) {
         console.error('Controller Error: getSetupStatusController failed'.red.bold, error);
@@ -855,6 +861,162 @@ const mergePathMappingController = async (req: Request, res: Response) => {
     }
 }
 
+// ======================== R2 Config Controllers ========================
+
+/**
+ * GET /api/v1/setup/r2-config
+ * Returns saved R2 credentials (SECRET_ACCESS_KEY masked to '***')
+ */
+const getR2ConfigController = async (req: Request, res: Response) => {
+    console.info('Controller: getR2ConfigController started'.bgBlue.white.bold);
+
+    try {
+        const r2Config: IR2Config | null = getR2Config();
+
+        if (!r2Config) {
+            console.log('SUCCESS: R2 config not configured'.bgGreen.bold);
+            res.status(200).send(new ApiResponse({
+                success: true,
+                message: 'R2 config not configured yet!',
+                r2Config: null,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: R2 config fetched'.bgGreen.bold);
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'R2 config fetched!',
+            r2Config,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getR2ConfigController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while fetching R2 config!',
+        }));
+    }
+}
+
+/**
+ * POST /api/v1/setup/r2-config
+ * Validates all 5 fields, saves to config.json, injects into process.env, re-initializes S3Client
+ */
+const saveR2ConfigController = async (req: Request, res: Response) => {
+    console.info('Controller: saveR2ConfigController started'.bgBlue.white.bold);
+
+    try {
+        const {accessKeyId, secretAccessKey, endpoint, publicUrl, bucketName}: ISaveR2ConfigBody = req.body;
+
+        if (!accessKeyId) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('accessKeyId'),
+                errorMsg: 'accessKeyId is required!',
+            }));
+            return;
+        }
+
+        if (!secretAccessKey) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('secretAccessKey'),
+                errorMsg: 'secretAccessKey is required!',
+            }));
+            return;
+        }
+
+        if (!endpoint) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('endpoint'),
+                errorMsg: 'endpoint is required!',
+            }));
+            return;
+        }
+
+        if (!R2_ENDPOINT_REGEX.test(endpoint)) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateInvalidCode('endpoint'),
+                errorMsg: 'endpoint must be a valid Cloudflare R2 URL in the format https://<account-id>.r2.cloudflarestorage.com',
+            }));
+            return;
+        }
+
+        if (!publicUrl) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('publicUrl'),
+                errorMsg: 'publicUrl is required!',
+            }));
+            return;
+        }
+
+        if (!bucketName) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('bucketName'),
+                errorMsg: 'bucketName is required!',
+            }));
+            return;
+        }
+
+        // If secretAccessKey is masked, preserve the existing value
+        let effectiveSecretAccessKey: string = secretAccessKey;
+        if (secretAccessKey === '***') {
+            const existingConfig: IR2Config | null = getR2Config();
+            if (existingConfig) {
+                effectiveSecretAccessKey = existingConfig.secretAccessKey;
+            } else {
+                res.status(400).send(new ApiResponse({
+                    success: false,
+                    errorCode: generateInvalidCode('secretAccessKey'),
+                    errorMsg: 'secretAccessKey cannot be masked when no existing config is saved!',
+                }));
+                return;
+            }
+        }
+
+        const r2Config: IR2Config = {
+            accessKeyId,
+            secretAccessKey: effectiveSecretAccessKey,
+            endpoint,
+            publicUrl,
+            bucketName,
+        };
+
+        // Save to ~/.claude-lens/config.json
+        saveR2Config(r2Config);
+
+        // Inject into process.env so r2.ts picks them up
+        process.env.CLOUDFLARE_ACCESS_KEY_ID = r2Config.accessKeyId;
+        process.env.CLOUDFLARE_SECRET_ACCESS_KEY = r2Config.secretAccessKey;
+        process.env.CLOUDFLARE_R2_ENDPOINT = r2Config.endpoint;
+        process.env.CLOUDFLARE_R2_PUBLIC_URL = r2Config.publicUrl;
+        process.env.CLOUDFLARE_R2_BUCKET_NAME = r2Config.bucketName;
+
+        // Re-initialize S3Client with new credentials
+        initR2Client();
+
+        console.log('SUCCESS: R2 config saved'.bgGreen.bold);
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'R2 config saved!',
+            r2Config: {
+                ...r2Config,
+                secretAccessKey: '***',
+            },
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: saveR2ConfigController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while saving R2 config!',
+        }));
+    }
+}
+
 export {
     getSetupStatusController,
     getConfigurationsController,
@@ -869,4 +1031,6 @@ export {
     updatePathMappingController,
     deletePathMappingController,
     mergePathMappingController,
+    getR2ConfigController,
+    saveR2ConfigController,
 };

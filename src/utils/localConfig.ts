@@ -1,7 +1,7 @@
 import "colors";
 import fs from "fs";
 import path from "path";
-import {ILocalConfig} from "../types/setup";
+import {ILocalConfig, IR2Config} from "../types/setup";
 
 // --- Constants ---
 
@@ -49,4 +49,30 @@ function saveLocalConfig(config: ILocalConfig): void {
     console.debug('DEBUG: Local config saved'.cyan, {path: CONFIG_FILE});
 }
 
-export {getLocalConfig, saveLocalConfig, generateRandomColor};
+/**
+ * Read the r2Config section from ~/.claude-lens/config.json
+ * Returns the R2 config, or null if not configured
+ */
+function getR2Config(): IR2Config | null {
+    const localConfig: ILocalConfig | null = getLocalConfig();
+    if (!localConfig?.r2Config) {
+        console.debug('DEBUG: R2 config not found in local config'.cyan);
+        return null;
+    }
+
+    console.debug('DEBUG: R2 config loaded'.cyan);
+    return localConfig.r2Config;
+}
+
+/**
+ * Write r2Config into ~/.claude-lens/config.json
+ * Preserves all other config keys
+ */
+function saveR2Config(config: IR2Config): void {
+    const localConfig: ILocalConfig = getLocalConfig() ?? {configurations: [], activeConfigId: '', pathMappings: []};
+    localConfig.r2Config = config;
+    saveLocalConfig(localConfig);
+    console.debug('DEBUG: R2 config saved'.cyan);
+}
+
+export {getLocalConfig, saveLocalConfig, generateRandomColor, getR2Config, saveR2Config};

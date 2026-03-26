@@ -9,8 +9,10 @@ import {
     getConfigProjectsController,
     getConfigurationsController,
     getPathMappingsController,
+    getR2ConfigController,
     getSetupStatusController,
     mergePathMappingController,
+    saveR2ConfigController,
     testConfigurationController,
     updatePathMappingController,
 } from "../controllers/SetupController";
@@ -27,6 +29,10 @@ router.delete('/configurations/:configId', deleteConfigurationController);
 router.post('/configurations/:configId/test', testConfigurationController);
 router.post('/configurations/:configId/activate', activateConfigurationController);
 router.get('/configurations/:configId/projects', getConfigProjectsController);
+
+// R2 config routes
+router.get('/r2-config', getR2ConfigController);
+router.post('/r2-config', saveR2ConfigController);
 
 // Path mapping CRUD + merge routes
 router.get('/path-mappings', getPathMappingsController);

@@ -8,6 +8,15 @@ export interface IMongoConfiguration {
     lastConnectedAt?: string;
 }
 
+/** Cloudflare R2 storage credentials for attachment uploads */
+export interface IR2Config {
+    accessKeyId: string;
+    secretAccessKey: string;
+    endpoint: string;
+    publicUrl: string;
+    bucketName: string;
+}
+
 /** A single path mapping — maps multiple absolute paths to one canonical path */
 export interface IPathMapping {
     id: string;              // UUID — unique key
@@ -21,6 +30,7 @@ export interface ILocalConfig {
     configurations: IMongoConfiguration[];
     activeConfigId: string;
     pathMappings: IPathMapping[];
+    r2Config?: IR2Config;
 }
 
 /** POST /api/v1/setup/configurations — request body */
@@ -61,4 +71,13 @@ export interface IEditPathMappingBody {
 /** Route params for path mapping endpoints that require :mappingId */
 export interface IMappingIdParams {
     mappingId?: string;
+}
+
+/** POST /api/v1/setup/r2-config — request body */
+export interface ISaveR2ConfigBody {
+    accessKeyId?: string;
+    secretAccessKey?: string;
+    endpoint?: string;
+    publicUrl?: string;
+    bucketName?: string;
 }

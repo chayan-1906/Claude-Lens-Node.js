@@ -2,20 +2,37 @@ import "colors";
 import convert from "heic-convert";
 import {_Object, DeleteObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {IAttachment, IAttachmentMeta, IBuildContentBlocksResult} from "../types/ws";
-import {CLOUDFLARE_ACCESS_KEY_ID, CLOUDFLARE_R2_BUCKET_NAME, CLOUDFLARE_R2_ENDPOINT, CLOUDFLARE_R2_PUBLIC_URL, CLOUDFLARE_SECRET_ACCESS_KEY} from "../config/config";
 
 /** MIME types that require conversion to JPEG before upload (Claude API only accepts JPEG/PNG/GIF/WebP) */
 const HEIC_MIME_TYPES: Set<string> = new Set(['image/heic', 'image/heif']);
 
-/** S3-compatible client configured for Cloudflare R2 */
-const r2Client: S3Client = new S3Client({
-    region: 'auto',
-    endpoint: CLOUDFLARE_R2_ENDPOINT,
-    credentials: {
-        accessKeyId: CLOUDFLARE_ACCESS_KEY_ID ?? '',
-        secretAccessKey: CLOUDFLARE_SECRET_ACCESS_KEY ?? '',
-    },
-});
+/** S3-compatible client configured for Cloudflare R2 — lazily initialized */
+let r2Client: S3Client | null = null;
+
+/**
+ * (Re-)initialize the S3Client from current process.env values.
+ * Called on server startup after injecting R2 config, and again
+ * whenever credentials are updated via the Setup UI.
+ */
+function initR2Client(): void {
+    r2Client = new S3Client({
+        region: 'auto',
+        endpoint: process.env.CLOUDFLARE_R2_ENDPOINT,
+        credentials: {
+            accessKeyId: process.env.CLOUDFLARE_ACCESS_KEY_ID ?? '',
+            secretAccessKey: process.env.CLOUDFLARE_SECRET_ACCESS_KEY ?? '',
+        },
+    });
+    console.debug('DEBUG: R2 S3Client initialized'.cyan);
+}
+
+/** Return the current S3Client, initializing on first call if needed */
+function getR2Client(): S3Client {
+    if (!r2Client) {
+        initR2Client();
+    }
+    return r2Client!;
+}
 
 /**
  * Upload a single attachment to R2 under `<sessionId>/<timestamp>-<filename>`.
@@ -25,14 +42,14 @@ async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<s
     const key: string = `${sessionId}/${Date.now()}-${attachment.name}`;
     const buffer: Buffer = Buffer.from(attachment.data, 'base64');
 
-    await r2Client.send(new PutObjectCommand({
-        Bucket: CLOUDFLARE_R2_BUCKET_NAME,
+    await getR2Client().send(new PutObjectCommand({
+        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
         Key: key,
         Body: buffer,
         ContentType: attachment.mimeType,
     }));
 
-    const publicUrl: string = `${CLOUDFLARE_R2_PUBLIC_URL}/${key}`;
+    const publicUrl: string = `${process.env.CLOUDFLARE_R2_PUBLIC_URL}/${key}`;
     console.log(`R2: Uploaded ${attachment.name} (${(buffer.length / 1024).toFixed(1)} KB) → ${publicUrl}`.green);
     return publicUrl;
 }
@@ -42,8 +59,8 @@ async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<s
  * Called when a session is deleted from Claude Lens.
  */
 async function deleteSessionAttachments(sessionId: string): Promise<number> {
-    const listed = await r2Client.send(new ListObjectsV2Command({
-        Bucket: CLOUDFLARE_R2_BUCKET_NAME,
+    const listed = await getR2Client().send(new ListObjectsV2Command({
+        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
         Prefix: `${sessionId}/`,
     }));
 
@@ -51,8 +68,8 @@ async function deleteSessionAttachments(sessionId: string): Promise<number> {
         return 0;
     }
 
-    await r2Client.send(new DeleteObjectsCommand({
-        Bucket: CLOUDFLARE_R2_BUCKET_NAME,
+    await getR2Client().send(new DeleteObjectsCommand({
+        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
         Delete: {
             Objects: listed.Contents.map((object: _Object) => ({Key: object.Key!})),
         },
@@ -113,4 +130,4 @@ async function buildContentBlocks(attachments: IAttachment[], sessionId: string,
     return {blocks, attachmentMeta};
 }
 
-export {uploadToR2, deleteSessionAttachments, buildContentBlocks};
+export {initR2Client, uploadToR2, deleteSessionAttachments, buildContentBlocks};

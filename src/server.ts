@@ -4,12 +4,15 @@ import morgan from "morgan";
 import {createServer, Server as HttpServer} from "http";
 import express, {Express, Request, Response} from 'express';
 import {PORT} from "./config/config";
+import {initR2Client} from "./utils/r2";
+import type {IR2Config} from "./types/setup";
 import syncRoutes from "./routes/SyncRoutes";
 import {connectDB} from "./config/connectDB";
 import {getLocalIP} from "./utils/getLocalIP";
 import taskRoutes from "./routes/TaskRoutes";
 import setupRoutes from "./routes/SetupRoutes";
 import voiceRoutes from "./routes/VoiceRoutes";
+import {getR2Config} from "./utils/localConfig";
 import exportRoutes from "./routes/ExportRoutes";
 import importRoutes from "./routes/ImportRoutes";
 import memoryRoutes from "./routes/MemoryRoutes";
@@ -49,6 +52,20 @@ const port: number = Number(PORT) || 20261;
 attachWebSocket(httpServer);
 
 const start = async () => {
+    // Inject saved R2 credentials into process.env before any module reads them
+    const r2Config: IR2Config | null = getR2Config();
+    if (r2Config) {
+        process.env.CLOUDFLARE_ACCESS_KEY_ID = r2Config.accessKeyId;
+        process.env.CLOUDFLARE_SECRET_ACCESS_KEY = r2Config.secretAccessKey;
+        process.env.CLOUDFLARE_R2_ENDPOINT = r2Config.endpoint;
+        process.env.CLOUDFLARE_R2_PUBLIC_URL = r2Config.publicUrl;
+        process.env.CLOUDFLARE_R2_BUCKET_NAME = r2Config.bucketName;
+        initR2Client();
+        console.log('R2: Credentials loaded from config.json'.green.bold);
+    } else {
+        console.log('R2: No saved credentials — configure via /setup'.yellow.bold);
+    }
+
     try {
         const connection = await connectDB();
         if (!connection) {
