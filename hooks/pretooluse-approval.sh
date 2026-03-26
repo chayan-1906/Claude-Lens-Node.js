@@ -3,7 +3,7 @@
 # to the backend for user approval before execution. The hook blocks until
 # the user responds (approve/deny) via the Web UI.
 #
-# Registered in ~/.claude/settings.json with matcher: "Edit|Write|Bash|mcp__.*"
+# Registered in ~/.claude/settings.json with matcher: "Read|Edit|Write|NotebookEdit|Bash|WebSearch|WebFetch|mcp__.*"
 # Claude CLI pauses while this hook runs (600s default timeout).
 
 INPUT=$(cat)
