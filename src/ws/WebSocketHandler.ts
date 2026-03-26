@@ -16,7 +16,7 @@ import MessageModel, {IMessage} from "../models/Message";
 import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
-import {resolveLocalPath, toProjectDirHash} from "../utils/resolveProjectDir";
+import {resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
 import {
     ClientMessage,
@@ -35,9 +35,8 @@ import {
  * Claude stores sessions at ~/.claude/projects/{projectDirHash}/{sessionId}.jsonl
  * where projectDirHash replaces all non-alphanumeric chars with '-'.
  */
-function isLocalSessionAvailable(projectDir: string, sessionId: string): boolean {
+function isLocalSessionAvailable(projectDirHash: string, sessionId: string): boolean {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
-    const projectDirHash: string = projectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
     const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
 
     console.log(`WebSocket: [TRACE] isLocalSessionAvailable — checking: ${jsonlPath}`.cyan);
@@ -95,9 +94,8 @@ function isLocalSessionAvailable(projectDir: string, sessionId: string): boolean
  * is an assistant message whose content ends with tool_use blocks (no following tool_result),
  * remove it. Repeat until the history ends cleanly.
  */
-function repairOrphanedToolUse(projectDir: string, sessionId: string): void {
+function repairOrphanedToolUse(projectDirHash: string, sessionId: string): void {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
-    const projectDirHash: string = projectDir.replace(NON_ALPHANUMERIC_REGEX, '-');
     const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
 
     if (!fs.existsSync(jsonlPath)) return;
@@ -146,9 +144,10 @@ function repairOrphanedToolUse(projectDir: string, sessionId: string): void {
  * Note: tool_use/tool_result blocks and thinking blocks may be absent
  * if they were stripped during the original sync.
  */
-function reconstructAndSaveJsonl(session: ISession, messages: IMessage[], localProjectDirHash?: string): void {
+function reconstructAndSaveJsonl(session: ISession, messages: IMessage[], localProjectDirHash?: string, localRawProjectDir?: string): void {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
     const effectiveHash: string = localProjectDirHash ?? session.projectDir;
+    const effectiveCwd: string = localRawProjectDir ?? session.rawProjectDir;
     const sessionDir: string = path.join(claudeProjectsDir, effectiveHash);
     const jsonlPath: string = path.join(sessionDir, `${session.sessionId}.jsonl`);
 
@@ -302,7 +301,7 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[], localP
             parentUuid: message.parentUuid ?? null,
             sessionId: session.sessionId,
             timestamp: message.timestamp ? (message.timestamp as Date).toISOString() : new Date().toISOString(),
-            cwd: session.rawProjectDir,
+            cwd: effectiveCwd,
             message: {
                 role: message.role,
                 content: message.content,
@@ -369,16 +368,19 @@ const MEMORY_PATH_MARKER: string = '/memory/';
  * Skips if the memory directory already exists with files on disk.
  * Returns true if any files were restored.
  */
-async function reconstructAndSaveMemory(projectDir: string): Promise<boolean> {
+async function reconstructAndSaveMemory(localProjectDirHash: string): Promise<boolean> {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
-    const memoryDir: string = path.join(claudeProjectsDir, projectDir, 'memory');
+    const memoryDir: string = path.join(claudeProjectsDir, localProjectDirHash, 'memory');
 
     // Skip if memory dir already exists with files
     if (fs.existsSync(memoryDir) && fs.readdirSync(memoryDir).length > 0) {
         return false;
     }
 
-    const memories = await MemoryModel.find({projectDir});
+    // Query MongoDB with the canonical hash — sync always stores canonical.
+    // Write files to the local hash directory so Claude finds them.
+    const canonicalHash: string = resolveProjectDirHash(localProjectDirHash);
+    const memories = await MemoryModel.find({projectDir: canonicalHash});
     if (memories.length === 0) {
         return false;
     }
@@ -944,7 +946,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                     console.log(`WebSocket: [TRACE]   [${i}] role=${m.role} uuid=${m.uuid} content=${contentSummary}`.cyan);
                                 });
                                 try {
-                                    reconstructAndSaveJsonl(session, messages, localProjectDirHash);
+                                    reconstructAndSaveJsonl(session, messages, localProjectDirHash, localRawProjectDir);
                                 } catch (reconstructionError: unknown) {
                                     sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
                                     break;

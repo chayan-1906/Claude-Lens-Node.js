@@ -334,11 +334,14 @@ class SyncService {
                 try {
                     const content: string = fs.readFileSync(memoryFilePath, 'utf-8');
 
+                    // Use {projectDir, relativePath} as unique key instead of full filePath.
+                    // Full filePath includes the machine-specific hash prefix (e.g. -Volumes- vs -Users-),
+                    // which causes duplicate Memory docs for the same logical file across machines.
                     const existing = await MemoryModel.findOneAndUpdate(
-                        {filePath: memoryFilePath},
+                        {projectDir: projectDirName, filePath: mdFile},
                         {
                             projectDir: projectDirName,
-                            filePath: memoryFilePath,
+                            filePath: mdFile,
                             content,
                         },
                         {upsert: true, returnDocument: 'before'},

@@ -127,9 +127,9 @@ class IdeService {
 
                         // Fetch and log available tools (non-blocking — just for debugging)
                         this.listTools().then((tools: unknown) => {
-                            console.log(`IdeService: [tools/list] ${JSON.stringify(tools, null, 2)}`.cyan);
-                        }).catch((err: unknown) => {
-                            console.warn(`IdeService: [tools/list] failed — ${err}`.yellow);
+                            // console.log(`IdeService: [tools/list] ${JSON.stringify(tools, null, 2)}`.cyan);
+                        }).catch((error: unknown) => {
+                            console.warn(`IdeService: [tools/list] failed — ${error}`.yellow);
                         });
                     },
                     reject: (err: Error) => {
