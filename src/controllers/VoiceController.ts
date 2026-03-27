@@ -3,6 +3,7 @@ import {Request, Response} from "express";
 import {ApiResponse} from "../utils/ApiResponse";
 import VoiceService from "../services/VoiceService";
 import {generateMissingCode} from "../utils/generateErrorCodes";
+import {getTtsSettings, saveTtsSettings} from "../utils/localConfig";
 
 const transcribeController = async (req: Request, res: Response) => {
     console.info('Controller: transcribeController started'.bgBlue.white.bold);
@@ -91,6 +92,50 @@ const speakController = async (req: Request, res: Response) => {
             }));
         }
     }
-};
+}
 
-export {transcribeController, speakController};
+const getTtsSettingsController = (req: Request, res: Response) => {
+    console.info('Controller: getTtsSettingsController started'.bgBlue.white.bold);
+
+    try {
+        const {voiceId, rate} = getTtsSettings();
+        console.log('SUCCESS: TTS settings fetched'.bgGreen.bold, {voiceId, rate});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'TTS settings fetched successfully!',
+            voiceId,
+            rate,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getTtsSettingsController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while fetching TTS settings!',
+        }));
+    }
+}
+
+const saveTtsSettingsController = (req: Request, res: Response) => {
+    console.info('Controller: saveTtsSettingsController started'.bgBlue.white.bold);
+
+    try {
+        const voiceId: string | undefined = req.body?.voiceId;
+        const rate: number | undefined = req.body?.rate !== undefined ? Number(req.body.rate) : undefined;
+
+        saveTtsSettings({voiceId, rate});
+
+        console.log('SUCCESS: TTS settings saved'.bgGreen.bold, {voiceId, rate});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'TTS settings saved successfully!',
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: saveTtsSettingsController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while saving TTS settings!',
+        }));
+    }
+}
+
+export {transcribeController, speakController, getTtsSettingsController, saveTtsSettingsController};

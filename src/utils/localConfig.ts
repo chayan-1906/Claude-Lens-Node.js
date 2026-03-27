@@ -75,4 +75,28 @@ function saveR2Config(config: IR2Config): void {
     console.debug('DEBUG: R2 config saved'.cyan);
 }
 
-export {getLocalConfig, saveLocalConfig, generateRandomColor, getR2Config, saveR2Config};
+/**
+ * Read ttsVoiceId and ttsRate from ~/.claude-lens/config.json
+ * Returns the stored values, or the defaults if not set.
+ */
+function getTtsSettings(): {voiceId: string; rate: number} {
+    const localConfig: ILocalConfig | null = getLocalConfig();
+    return {
+        voiceId: localConfig?.ttsVoiceId ?? 'en-US-AriaNeural',
+        rate: localConfig?.ttsRate ?? 1,
+    };
+}
+
+/**
+ * Write ttsVoiceId and/or ttsRate into ~/.claude-lens/config.json
+ * Only updates the supplied fields — preserves all other config keys.
+ */
+function saveTtsSettings({voiceId, rate}: {voiceId?: string; rate?: number}): void {
+    const localConfig: ILocalConfig = getLocalConfig() ?? {configurations: [], activeConfigId: '', pathMappings: []};
+    if (voiceId !== undefined) localConfig.ttsVoiceId = voiceId;
+    if (rate !== undefined) localConfig.ttsRate = rate;
+    saveLocalConfig(localConfig);
+    console.debug('DEBUG: TTS settings saved'.cyan, {voiceId, rate});
+}
+
+export {getLocalConfig, saveLocalConfig, generateRandomColor, getR2Config, saveR2Config, getTtsSettings, saveTtsSettings};

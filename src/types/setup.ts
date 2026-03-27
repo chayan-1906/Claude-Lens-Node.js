@@ -31,6 +31,8 @@ export interface ILocalConfig {
     activeConfigId: string;
     pathMappings: IPathMapping[];
     r2Config?: IR2Config;
+    ttsVoiceId?: string;
+    ttsRate?: number;
 }
 
 /** POST /api/v1/setup/configurations — request body */
