@@ -1,5 +1,7 @@
 import "colors";
+import {Readable} from "stream";
 import Groq, {toFile} from "groq-sdk";
+import {MsEdgeTTS, OUTPUT_FORMAT} from "msedge-tts";
 import {Transcription} from "groq-sdk/resources/audio";
 import {GROQ_API_KEY} from "../config/config";
 import {ITranscribeServiceResponse} from "../types/voice";
@@ -86,6 +88,18 @@ class VoiceService {
         console.log('Service: LLaMA rephrase complete'.cyan, {transcript, rephrased});
 
         return {transcript, rephrased};
+    }
+
+    /**
+     * Synthesise text to MP3 audio using Microsoft Edge Neural TTS.
+     * Returns a Node.js Readable stream that callers can pipe into an Express response.
+     */
+    static async speak(text: string, voice: string, rate: number): Promise<Readable> {
+        console.log('Service: VoiceService.speak called'.cyan.italic, {voice, rate, textLength: text.length});
+        const tts: MsEdgeTTS = new MsEdgeTTS();
+        await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+        const {audioStream} = tts.toStream(text, {rate});
+        return audioStream;
     }
 }
 

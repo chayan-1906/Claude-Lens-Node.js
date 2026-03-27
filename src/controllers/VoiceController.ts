@@ -48,4 +48,49 @@ const transcribeController = async (req: Request, res: Response) => {
     }
 }
 
-export {transcribeController};
+const speakController = async (req: Request, res: Response) => {
+    console.info('Controller: speakController started'.bgBlue.white.bold);
+
+    try {
+        const text: string = req.body?.text;
+        const voice: string = req.body?.voice ?? 'en-US-AriaNeural';
+        const rate: number = Number(req.body?.rate ?? 1);
+
+        if (!text || typeof text !== 'string' || text.trim().length === 0) {
+            console.warn('Controller: No text in request'.yellow.bold);
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('text'),
+                errorMsg: 'No text provided for speech synthesis!',
+            }));
+            return;
+        }
+
+        const audioStream = await VoiceService.speak(text.trim(), voice, rate);
+
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        audioStream.pipe(res);
+
+        audioStream.on('error', (err: Error) => {
+            console.error('Controller Error: TTS stream error'.red.bold, err);
+            if (!res.headersSent) {
+                res.status(500).send(new ApiResponse({
+                    success: false,
+                    errorMsg: 'Speech synthesis stream failed!',
+                }));
+            }
+        });
+    } catch (error: any) {
+        console.error('Controller Error: speakController failed'.red.bold, error);
+        if (!res.headersSent) {
+            res.status(500).send(new ApiResponse({
+                success: false,
+                errorMsg: error.message || 'Something went wrong during speech synthesis!',
+            }));
+        }
+    }
+};
+
+export {transcribeController, speakController};
