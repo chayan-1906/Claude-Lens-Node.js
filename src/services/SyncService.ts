@@ -8,14 +8,9 @@ import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
 import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
-import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
-import {resolveCanonicalPath, toProjectDirHash, resolveProjectDirHash} from "../utils/resolveProjectDir";
+import {CLAUDE_PROJECTS_DIR, CLAUDE_TASKS_DIR, NON_ALPHANUMERIC_REGEX} from "../utils/constants";
+import {resolveCanonicalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {ALL_SYNC_TARGETS, IParsedFile, IParsedMessage, ISyncMemoriesResponse, ISyncParams, ISyncResponse, ISyncTasksResponse, RawTask, SyncTarget} from "../types/sync";
-
-// --- Constants ---
-
-const CLAUDE_PROJECTS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'projects');
-const CLAUDE_TASKS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'tasks');
 
 class SyncService {
     /**

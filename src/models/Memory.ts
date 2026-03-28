@@ -27,7 +27,6 @@ const MemorySchema = new Schema<IMemory>({
         type: String,
         required: true,
         trim: true,
-        unique: true,
         index: true,
     },
     content: {
@@ -47,6 +46,8 @@ const MemorySchema = new Schema<IMemory>({
         },
     },
 });
+
+MemorySchema.index({projectDir: 1, filePath: 1}, {unique: true});
 
 /** Mongoose model for Claude Code memory */
 const MemoryModel: IMemoryModel = model<IMemory, IMemoryModel>('Memory', MemorySchema);

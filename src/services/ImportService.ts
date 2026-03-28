@@ -7,12 +7,9 @@ import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import {IExportManifest} from "../types/export";
-import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource} from "../models/Session";
+import {CLAUDE_PROJECTS_DIR, NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import {IImportResult, IImportServiceParams, IJsonlLine} from "../types/import";
-
-/** Base directory for Claude Code project data */
-const CLAUDE_PROJECTS_DIR: string = path.join(process.env.HOME || '~', '.claude', 'projects');
 
 class ImportService {
     /**
