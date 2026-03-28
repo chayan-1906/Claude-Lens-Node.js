@@ -194,6 +194,8 @@ class ExportService {
             sessionIndex.push({
                 sessionId: session.sessionId,
                 title: session.title,
+                titleRenamed: session.titleRenamed,
+                description: session.description,
                 aiModel: session.aiModel,
                 gitBranch: session.gitBranch,
                 file: `projects/${session.sessionId}.jsonl`,

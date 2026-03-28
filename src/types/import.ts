@@ -8,9 +8,14 @@ export interface IJsonlLine {
     message: {
         role: 'user' | 'assistant';
         content: string | Record<string, unknown>[];
+        /** Present on assistant messages — shared across split JSONL lines for the same turn */
+        id?: string;
+        model?: string;
+        usage?: Record<string, unknown>;
     };
     uuid: string;
-    timestamp: string;
+    /** Present on user messages; absent on assistant messages */
+    timestamp?: string;
     sessionId: string;
     cwd: string;
     gitBranch: string;

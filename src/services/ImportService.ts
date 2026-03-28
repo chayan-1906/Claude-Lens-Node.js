@@ -75,6 +75,8 @@ class ImportService {
                 {sessionId: sessionEntry.sessionId},
                 {
                     title: sessionEntry.title,
+                    titleRenamed: sessionEntry.titleRenamed ?? false,
+                    description: sessionEntry.description,
                     aiModel: sessionEntry.aiModel,
                     projectDir,
                     rawProjectDir,
@@ -95,21 +97,57 @@ class ImportService {
                 existingDocs.map((document) => document.uuid as string),
             );
 
-            // Parse and insert new messages
-            const newMessages = [];
+            // Parse and insert new messages.
+            // Assistant JSONL lines lack a timestamp field and Claude CLI splits each content
+            // block (thinking, text, tool_use) into a separate line sharing the same message.id.
+            // We must: (a) derive timestamps from the last user message, (b) merge consecutive
+            // assistant entries with the same message.id — mirroring parseJsonlFile's logic.
+            const newMessages: Record<string, unknown>[] = [];
+            let lastTimestamp: Date = new Date(firstLine.timestamp ?? Date.now());
+            let lastAssistantMsgId: string | null = null;
+
             for (const line of lines) {
                 const parsed: IJsonlLine = JSON.parse(line);
                 if (existingUuids.has(parsed.uuid)) continue;
+
+                const role: string = parsed.message.role;
+                const timestamp: Date = parsed.timestamp
+                    ? new Date(parsed.timestamp)
+                    : lastTimestamp;
+                if (parsed.timestamp) {
+                    lastTimestamp = timestamp;
+                }
+
+                const msgId: string | undefined = parsed.message.id;
+
+                // Merge consecutive assistant entries with the same message.id
+                if (role === 'assistant' && msgId && msgId === lastAssistantMsgId && newMessages.length > 0) {
+                    const lastMsg: Record<string, unknown> = newMessages[newMessages.length - 1];
+                    if (Array.isArray(lastMsg.content) && Array.isArray(parsed.message.content)) {
+                        (lastMsg.content as Record<string, unknown>[]).push(...parsed.message.content);
+                        lastMsg.uuid = parsed.uuid;
+                        lastMsg.timestamp = timestamp;
+                        (lastMsg.rawLines as string[]).push(line);
+                        continue;
+                    }
+                }
 
                 newMessages.push({
                     uuid: parsed.uuid,
                     parentUuid: parsed.parentUuid ?? undefined,
                     sessionInternalId,
-                    role: parsed.message.role,
+                    role,
                     content: parsed.message.content,
-                    timestamp: new Date(parsed.timestamp),
+                    timestamp,
+                    rawLines: [line],
                     ...(parsed.tokenUsage && {tokenUsage: parsed.tokenUsage}),
                 });
+
+                if (role === 'assistant') {
+                    lastAssistantMsgId = msgId ?? null;
+                } else {
+                    lastAssistantMsgId = null;
+                }
             }
 
             if (newMessages.length > 0) {
@@ -133,20 +171,19 @@ class ImportService {
             // Extract relative path after 'projects/memory/'
             const relPath: string = memoryEntry.entryName.substring('projects/memory/'.length);
 
-            // Construct the absolute filePath for MongoDB
-            const filePath: string = path.join(memoryDiskDir, relPath);
-
-            // Upsert Memory document
+            // Use {projectDir, filePath: relPath} as upsert key — mirrors SyncService which stores
+            // just the filename (not the full absolute path) to avoid duplicate docs across machines.
             await MemoryModel.findOneAndUpdate(
-                {filePath},
-                {projectDir, filePath, content},
+                {projectDir, filePath: relPath},
+                {projectDir, filePath: relPath, content},
                 {upsert: true},
             );
 
             // Write .md back to disk
-            const memoryFileDir: string = path.dirname(filePath);
+            const diskPath: string = path.join(memoryDiskDir, relPath);
+            const memoryFileDir: string = path.dirname(diskPath);
             fs.mkdirSync(memoryFileDir, {recursive: true});
-            fs.writeFileSync(filePath, content, 'utf-8');
+            fs.writeFileSync(diskPath, content, 'utf-8');
             totalMemoryFiles++;
             console.log(`  Import: wrote memory/${relPath} to disk`.green);
         }

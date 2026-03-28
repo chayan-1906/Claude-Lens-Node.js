@@ -6,6 +6,8 @@ import {Archiver} from "archiver";
 export interface IManifestSessionEntry {
     sessionId: string;
     title: string;
+    titleRenamed: boolean;
+    description?: string;
     aiModel?: string;
     gitBranch?: string;
     file: string;
