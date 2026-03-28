@@ -210,15 +210,17 @@ class SyncService {
                 aiModel: parsedMessage.aiModel,
                 timestamp: parsedMessage.timestamp,
                 tokenUsage: parsedMessage.tokenUsage,
+                rawLines: parsedMessage.rawLines,
             }));
 
         if (newMessages.length > 0) {
             await MessageModel.insertMany(newMessages, {ordered: false});
         }
 
-        // Backfill parentUuid for messages written by direct-write (live WebSocket sessions).
+        // Backfill parentUuid and rawLines for messages written by direct-write (live WebSocket sessions).
         // Direct-write saves messages without the correct parentUuid because stream-json events
         // don't include it. The JSONL file has the authoritative parentUuid values.
+        // rawLines may also be missing for messages direct-written before this feature was added.
         // bulkWrite with updateOne is efficient — only touches messages that need updating.
         if (existingUuids.size > 0) {
             const backfillOps = parsedFile.messages
@@ -236,6 +238,25 @@ class SyncService {
                 const backfillResult = await MessageModel.bulkWrite(backfillOps);
                 if (backfillResult.modifiedCount > 0) {
                     console.log(`SyncService: [backfill] Updated parentUuid for ${backfillResult.modifiedCount} direct-write messages (session: ${parsedFile.sessionId})`.cyan);
+                }
+            }
+
+            // Backfill rawLines for existing messages that don't have them yet
+            const rawLinesBackfillOps = parsedFile.messages
+                .filter((parsedMessage: IParsedMessage) =>
+                    existingUuids.has(parsedMessage.uuid) && parsedMessage.rawLines && parsedMessage.rawLines.length > 0,
+                )
+                .map((parsedMessage: IParsedMessage) => ({
+                    updateOne: {
+                        filter: {uuid: parsedMessage.uuid, $or: [{rawLines: {$exists: false}}, {rawLines: null}, {rawLines: {$size: 0}}]},
+                        update: {$set: {rawLines: parsedMessage.rawLines}},
+                    },
+                }));
+
+            if (rawLinesBackfillOps.length > 0) {
+                const rawLinesResult = await MessageModel.bulkWrite(rawLinesBackfillOps);
+                if (rawLinesResult.modifiedCount > 0) {
+                    console.log(`SyncService: [backfill] Backfilled rawLines for ${rawLinesResult.modifiedCount} messages (session: ${parsedFile.sessionId})`.cyan);
                 }
             }
         }

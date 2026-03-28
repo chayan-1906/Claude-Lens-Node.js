@@ -54,6 +54,7 @@ export interface IMessage extends Document {
         input: number;
         output: number;
     };
+    rawLines?: string[];                    // original JSONL line(s) that produced this message — lossless restore on resume
     createdAt: Date;
     updatedAt: Date;
 }
@@ -110,6 +111,9 @@ const MessageSchema = new Schema<IMessage>({
     tokenUsage: {
         input: {type: Number},
         output: {type: Number},
+    },
+    rawLines: {
+        type: [String],
     },
 }, {
     timestamps: true,

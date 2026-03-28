@@ -17,6 +17,7 @@ export interface IParsedMessage {
         input: number;
         output: number;
     };
+    rawLines?: string[];   // original JSONL line(s) — lossless restore on resume
 }
 
 export interface IParsedFile {

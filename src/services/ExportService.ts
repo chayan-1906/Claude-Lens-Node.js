@@ -38,20 +38,28 @@ class ExportService {
                 {sort: {timestamp: 1}},
             );
 
-            const jsonlLines: string[] = messages.map((message: IMessage) => JSON.stringify({
-                type: message.role === 'user' ? 'user' : 'assistant',
-                parentUuid: message.parentUuid ?? null,
-                isSidechain: false,
-                message: {role: message.role, content: message.content},
-                uuid: message.uuid,
-                timestamp: message.timestamp,
-                sessionId: session.sessionId,
-                cwd: session.rawProjectDir,
-                gitBranch: session.gitBranch ?? 'HEAD',
-                userType: 'external',
-                version: 1,
-                ...(message.tokenUsage && {tokenUsage: message.tokenUsage}),
-            }));
+            // Prefer rawLines for lossless JSONL generation. Fall back to reconstruction
+            // for legacy messages that pre-date the rawLines feature.
+            const jsonlLines: string[] = messages.flatMap((message: IMessage) => {
+                if (message.rawLines && message.rawLines.length > 0) {
+                    return message.rawLines;
+                }
+                // Legacy fallback: reconstruct from structured data
+                return [JSON.stringify({
+                    type: message.role === 'user' ? 'user' : 'assistant',
+                    parentUuid: message.parentUuid ?? null,
+                    isSidechain: false,
+                    message: {role: message.role, content: message.content},
+                    uuid: message.uuid,
+                    timestamp: message.timestamp,
+                    sessionId: session.sessionId,
+                    cwd: session.rawProjectDir,
+                    gitBranch: session.gitBranch ?? 'HEAD',
+                    userType: 'external',
+                    version: 1,
+                    ...(message.tokenUsage && {tokenUsage: message.tokenUsage}),
+                })];
+            });
 
             console.debug('DEBUG: Session JSONL built'.cyan, {sessionId: session.sessionId, messages: messages.length});
             const jsonlContent: string = jsonlLines.join('\n');

@@ -157,6 +157,9 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
 
                 // Append new blocks to existing message
                 (lastMsg.content as Record<string, unknown>[]).push(...(content as Record<string, unknown>[]));
+                // Accumulate raw line into the merged message
+                if (!lastMsg.rawLines) lastMsg.rawLines = [];
+                lastMsg.rawLines.push(lines[i]);
                 // Update uuid + timestamp to latest entry's values.
                 // IMPORTANT: Do NOT update parentUuid — the first entry's parentUuid
                 // points to the previous stored message (e.g. user prompt). Updating it
@@ -189,6 +192,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
             role: messageRole,
             content,
             timestamp: new Date(parsedLine.timestamp as string),
+            rawLines: [lines[i]],
         };
 
         if (messageRole === EMessageRole.ASSISTANT) {

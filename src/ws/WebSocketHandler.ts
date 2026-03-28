@@ -319,6 +319,36 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[], localP
 }
 
 /**
+ * Restore a Claude session JSONL file from raw lines stored in MongoDB.
+ * Concatenates rawLines from all messages in timestamp order and writes to disk.
+ * This is a lossless restoration — the original JSONL bytes are preserved exactly,
+ * unlike reconstructAndSaveJsonl() which reverse-engineers the format from structured data.
+ */
+function rawLineRestoreJsonl(session: ISession, messages: IMessage[], localProjectDirHash?: string): void {
+    const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+    const effectiveHash: string = localProjectDirHash ?? session.projectDir;
+    const sessionDir: string = path.join(claudeProjectsDir, effectiveHash);
+    const jsonlPath: string = path.join(sessionDir, `${session.sessionId}.jsonl`);
+
+    fs.mkdirSync(sessionDir, {recursive: true});
+
+    // Sort by timestamp ascending — preserves original JSONL line order
+    const sorted: IMessage[] = [...messages].sort((a: IMessage, b: IMessage) =>
+        new Date(a.timestamp as Date).getTime() - new Date(b.timestamp as Date).getTime(),
+    );
+
+    const allLines: string[] = [];
+    for (const message of sorted) {
+        if (message.rawLines && message.rawLines.length > 0) {
+            allLines.push(...message.rawLines);
+        }
+    }
+
+    fs.writeFileSync(jsonlPath, allLines.join('\n') + '\n', 'utf-8');
+    console.log(`WebSocket: [RAW-RESTORE] Lossless JSONL restored at ${jsonlPath} (${allLines.length} lines from ${messages.length} messages)`.green);
+}
+
+/**
  * Reconstruct task JSON files from MongoDB and write them to
  * ~/.claude/tasks/{sessionId}/{taskId}.json.
  * Skips if the task directory already exists with files on disk.
@@ -791,6 +821,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 pendingAttachmentMeta = null;
             }
 
+            // Extract raw lines attached by claudeSpawner (_rawLines is not part of the protocol —
+            // it's an internal field added before calling onMessage for lossless restore support)
+            const rawLines: string[] | undefined = event._rawLines as string[] | undefined;
+
             try {
                 await MessageModel.create({
                     uuid,
@@ -804,6 +838,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     timestamp: new Date(),
                     tokenUsage,
                     ...(attachments ? {attachments} : {}),
+                    ...(rawLines && rawLines.length > 0 ? {rawLines} : {}),
                 });
                 console.log(`WebSocket: [direct-write] Saved ${role} message (uuid: ${uuid})${attachments ? ` with ${attachments.length} attachment(s)` : ''}`.green);
             } catch (error: unknown) {
@@ -999,22 +1034,33 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             }
 
                             if (!localAvailable) {
-                                console.log(`WebSocket: [TRACE] Local JSONL unavailable/broken — reconstruction path`.cyan);
+                                console.log(`WebSocket: [TRACE] Local JSONL unavailable/broken — restore path`.cyan);
                                 if (!messages || messages.length === 0) {
                                     sendError(webSocket, `Cannot resume: session ${clientMessage.sessionId} has no messages in MongoDB and local files are missing.`);
                                     break;
                                 }
                                 console.log(`WebSocket: [TRACE] Messages from MongoDB (${messages.length}):`);
-                                messages.forEach((m, i) => {
-                                    const contentSummary: string = Array.isArray(m.content)
-                                        ? `ContentBlock[${m.content.length}]`
-                                        : `string(${String(m.content).length})`;
-                                    console.log(`WebSocket: [TRACE]   [${i}] role=${m.role} uuid=${m.uuid} content=${contentSummary}`.cyan);
+                                messages.forEach((message: IMessage, index: number) => {
+                                    const contentSummary: string = Array.isArray(message.content)
+                                        ? `ContentBlock[${message.content.length}]`
+                                        : `string(${String(message.content).length})`;
+                                    console.log(`WebSocket: [TRACE]   [${index}] role=${message.role} uuid=${message.uuid} rawLines=${message.rawLines?.length ?? 0} content=${contentSummary}`.cyan);
                                 });
                                 try {
-                                    reconstructAndSaveJsonl(session, messages, localProjectDirHash, localRawProjectDir);
+                                    // Prefer lossless raw-line restore when all messages have rawLines.
+                                    // Fall back to lossy reconstruction for legacy sessions that pre-date
+                                    // the rawLines feature (until the backfill migration has run).
+                                    const allHaveRawLines: boolean = messages.every((message: IMessage) => message.rawLines && message.rawLines.length > 0);
+                                    if (allHaveRawLines) {
+                                        console.log('WebSocket: [TRACE] All messages have rawLines — using lossless restore'.green);
+                                        rawLineRestoreJsonl(session, messages, localProjectDirHash);
+                                    } else {
+                                        const missingCount: number = messages.filter((message: IMessage) => !message.rawLines || message.rawLines.length === 0).length;
+                                        console.warn(`WebSocket: [TRACE] ${missingCount}/${messages.length} messages missing rawLines — falling back to reconstruction`.yellow);
+                                        reconstructAndSaveJsonl(session, messages, localProjectDirHash, localRawProjectDir);
+                                    }
                                 } catch (reconstructionError: unknown) {
-                                    sendError(webSocket, `Failed to reconstruct session files: ${reconstructionError}`);
+                                    sendError(webSocket, `Failed to restore session files: ${reconstructionError}`);
                                     break;
                                 }
 

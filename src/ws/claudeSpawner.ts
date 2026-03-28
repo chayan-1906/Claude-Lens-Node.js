@@ -185,6 +185,9 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     let turnMsgId: string | null = null;
     let turnEvents: Map<string, Record<string, unknown>> = new Map();
     let turnUuidOrder: string[] = [];
+    // Track the latest raw stdout line per uuid — the last event per uuid is complete
+    // (--include-partial-messages emits cumulative snapshots; latest = full content)
+    let turnRawLines: Map<string, string> = new Map();
     const flushAssistantTurn = (): void => {
         if (turnUuidOrder.length === 0 || !onMessage) {
             turnMsgId = null;
@@ -204,14 +207,18 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
         const lastUuid: string = turnUuidOrder[turnUuidOrder.length - 1];
         const lastEvent: Record<string, unknown> = turnEvents.get(lastUuid)!;
         const lastMsg = lastEvent.message as Record<string, unknown>;
+        // Collect raw lines in uuid order — one final line per uuid (the complete content)
+        const rawLines: string[] = turnUuidOrder.map((uuid: string) => turnRawLines.get(uuid)!).filter(Boolean);
         const mergedEvent: Record<string, unknown> = {
             ...lastEvent,
             message: {...lastMsg, content: mergedContent},
+            _rawLines: rawLines,
         };
         onMessage(mergedEvent);
         turnMsgId = null;
         turnEvents = new Map();
         turnUuidOrder = [];
+        turnRawLines = new Map();
     };
 
     claudeProcess.stdout!.on('data', (chunk: Buffer) => {
@@ -307,14 +314,16 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                             flushAssistantTurn();
                             turnMsgId = msgId;
                         }
-                        // Track unique uuids in order; update with latest event per uuid
+                        // Track unique uuids in order; update with latest event+line per uuid
+                        // (latest = complete content due to --include-partial-messages)
                         if (!turnEvents.has(eventUuid)) {
                             turnUuidOrder.push(eventUuid);
                         }
                         turnEvents.set(eventUuid, event);
+                        turnRawLines.set(eventUuid, line);
                     } else if (event.type === 'user') {
                         flushAssistantTurn();
-                        onMessage(event);
+                        onMessage({...event, _rawLines: [line]});
                     }
                 }
 

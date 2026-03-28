@@ -6,7 +6,7 @@
   "license": "ISC",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/server.ts",
+    "dev": "node scripts/register-hook.mjs && nodemon --exec ts-node src/server.ts",
     "build": "tsc",
     "bundle": "ncc build dist/server.js -o build",
     "package": "ts-node src/scripts/package-script.ts",
