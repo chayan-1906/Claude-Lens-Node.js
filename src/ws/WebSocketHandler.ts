@@ -104,33 +104,51 @@ function repairOrphanedToolUse(projectDirHash: string, sessionId: string): void 
         const lines: string[] = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean);
         let trimCount: number = 0;
 
-        // Walk backwards: remove trailing assistant entries that end with tool_use
-        // and have no following user entry with tool_result
+        // Walk backwards: remove trailing incomplete-turn entries so the session ends cleanly.
+        // Two patterns are handled, and they can alternate (the loop removes both until stable):
+        //
+        //   A) Trailing assistant entry that ends with tool_use blocks but has no following
+        //      user entry with tool_result — the tool was never executed.
+        //
+        //   B) Trailing user entry that contains ONLY tool_result blocks but has no following
+        //      assistant response — the tool returned its result but Claude never replied.
+        //      This is the case that triggers the "Continue from where you left off." synthetic
+        //      turn on --resume. Removing it eliminates the synthetic turn entirely.
+        //
+        // By handling both in a single loop, the chain A→B→A is resolved in one pass:
+        //   user/tool_result (removed) → assistant/tool_use (removed) → clean state.
         while (lines.length > 0) {
             const lastLine: string = lines[lines.length - 1];
             const entry = JSON.parse(lastLine) as Record<string, unknown>;
-
-            if (entry.type !== 'assistant') break;
-
             const message = entry.message as Record<string, unknown> | undefined;
             const content = message?.content;
-            if (!Array.isArray(content)) break;
 
-            const hasToolUse: boolean = (content as Record<string, unknown>[]).some(
-                (block: Record<string, unknown>) => block.type === 'tool_use',
-            );
-
-            if (!hasToolUse) break;
-
-            // This assistant message has tool_use blocks with no following tool_result — remove it
-            lines.pop();
-            trimCount++;
-            console.log(`WebSocket: [REPAIR] Removed orphaned tool_use assistant entry (trimCount: ${trimCount})`.yellow);
+            if (entry.type === 'assistant') {
+                if (!Array.isArray(content)) break;
+                const hasToolUse: boolean = (content as Record<string, unknown>[]).some(
+                    (block: Record<string, unknown>) => block.type === 'tool_use',
+                );
+                if (!hasToolUse) break;
+                lines.pop();
+                trimCount++;
+                console.log(`WebSocket: [REPAIR] Removed orphaned tool_use assistant entry (trimCount: ${trimCount})`.yellow);
+            } else if (entry.type === 'user') {
+                if (!Array.isArray(content) || content.length === 0) break;
+                const hasOnlyToolResults: boolean = (content as Record<string, unknown>[]).every(
+                    (block: Record<string, unknown>) => block.type === 'tool_result',
+                );
+                if (!hasOnlyToolResults) break;
+                lines.pop();
+                trimCount++;
+                console.log(`WebSocket: [REPAIR] Removed orphaned tool_result user entry (trimCount: ${trimCount})`.yellow);
+            } else {
+                break;
+            }
         }
 
         if (trimCount > 0) {
             fs.writeFileSync(jsonlPath, lines.join('\n') + '\n', 'utf-8');
-            console.log(`WebSocket: [REPAIR] Repaired JSONL — removed ${trimCount} trailing orphaned tool_use entries from ${jsonlPath}`.yellow);
+            console.log(`WebSocket: [REPAIR] Repaired JSONL — removed ${trimCount} trailing orphaned tool entries from ${jsonlPath}`.yellow);
         }
     } catch (err) {
         console.error(`WebSocket: [REPAIR] Failed to repair JSONL — ${err}`.red);

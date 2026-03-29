@@ -188,6 +188,11 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     // Track the latest raw stdout line per uuid — the last event per uuid is complete
     // (--include-partial-messages emits cumulative snapshots; latest = full content)
     let turnRawLines: Map<string, string> = new Map();
+    // For resume_session: the CLI auto-injects "Continue from where you left off." when the
+    // session was interrupted mid-execution (last state = tool_result with no assistant reply).
+    // This flag tracks whether we are currently inside that synthetic turn so we can suppress
+    // it from the WebSocket (both the user event and the "No response requested." result).
+    let resumeSyntheticActive: boolean = false;
     const flushAssistantTurn = (): void => {
         if (turnUuidOrder.length === 0 || !onMessage) {
             turnMsgId = null;
@@ -268,6 +273,34 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
                         console.log(`WebSocket: Suppressing context turn result (${contextResultsSeen}/${contextTurnsToSkip})`.cyan);
                     }
                     continue;
+                }
+
+                // Suppress the synthetic "Continue from where you left off." turn on --resume.
+                // The CLI injects this user message when the session had a pending tool_result
+                // with no following assistant response. It's a CLI internal artifact — suppress
+                // both the user event and the subsequent "No response requested." result from
+                // the WebSocket so they don't appear as phantom messages in the frontend.
+                if (message.type === 'resume_session' && !contextNdjson) {
+                    if (!resumeSyntheticActive && event.type === 'user') {
+                        const msgObj = event.message as Record<string, unknown> | undefined;
+                        const content = msgObj?.content as Array<Record<string, unknown>> | undefined;
+                        const isSynthetic: boolean = Array.isArray(content)
+                            && content.length === 1
+                            && content[0].type === 'text'
+                            && content[0].text === 'Continue from where you left off.';
+                        if (isSynthetic) {
+                            resumeSyntheticActive = true;
+                            console.log('WebSocket: [RESUME] Suppressing synthetic "Continue from where you left off." user event'.cyan);
+                            continue;
+                        }
+                    }
+                    if (resumeSyntheticActive) {
+                        if (event.type === 'result') {
+                            resumeSyntheticActive = false;
+                            console.log('WebSocket: [RESUME] Suppressing synthetic "No response requested." result event'.cyan);
+                        }
+                        continue;
+                    }
                 }
 
                 // --- Debug logging for stream-json events ---
