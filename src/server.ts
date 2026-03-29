@@ -5,6 +5,7 @@ import {createServer, Server as HttpServer} from "http";
 import express, {Express, Request, Response} from 'express';
 import {PORT} from "./config/config";
 import {initR2Client} from "./utils/r2";
+import r2Routes from "./routes/R2Routes";
 import syncRoutes from "./routes/SyncRoutes";
 import {connectDB} from "./config/connectDB";
 import {getLocalIP} from "./utils/getLocalIP";
@@ -31,6 +32,7 @@ app.use(morgan('dev'));
 // routes
 app.use('/api/v1/setup', setupRoutes);
 app.use('/api/v1/sync', syncRoutes);
+app.use('/api/v1/r2', r2Routes);
 app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/sessions', sessionRoutes);
 app.use('/api/v1/tasks', taskRoutes);

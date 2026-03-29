@@ -4,8 +4,7 @@ import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
-import {deleteSessionAttachments} from "../utils/r2";
-import {reclaimCollectionStorage} from "../utils/reclaimStorage";
+import {reclaimR2Storage} from "../utils/reclaimR2Storage";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse, IProject} from "../types/project";
 
@@ -82,18 +81,8 @@ class ProjectService {
             await mongoSession.commitTransaction();
             console.log('Database: Project deleted'.cyan, {projectDir, deletedSessionsCount, deletedMessagesCount, deletedTasksCount, deletedMemoriesCount});
 
-            // Clean up R2 attachments for all sessions (best-effort — don't fail the response on R2 errors)
-            let deletedAttachmentsCount: number = 0;
-            for (const sid of sessionIds) {
-                try {
-                    deletedAttachmentsCount += await deleteSessionAttachments(sid);
-                } catch (r2Error: unknown) {
-                    console.error(`R2: Failed to clean up attachments for session ${sid} — ${r2Error}`.red);
-                }
-            }
-
             // Reclaim fragmented storage — fire-and-forget (non-blocking)
-            reclaimCollectionStorage('messages').catch(() => {
+            reclaimR2Storage('messages').catch(() => {
             });
 
             return {
@@ -101,7 +90,7 @@ class ProjectService {
                 deletedMessages: deletedMessagesCount,
                 deletedTasks: deletedTasksCount,
                 deletedMemories: deletedMemoriesCount,
-                deletedAttachments: deletedAttachmentsCount,
+                deletedAttachments: 0,
             };
         } catch (error: unknown) {
             console.error('inside catch of deleteProject:'.red.bold, error);

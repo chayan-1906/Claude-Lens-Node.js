@@ -5,7 +5,6 @@ import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MessageModel from "../models/Message";
 import {ContentBlock} from "../models/Message";
-import {deleteSessionAttachments} from "../utils/r2";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import SessionModel, {ISession} from "../models/Session";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
@@ -140,15 +139,7 @@ class SessionService {
             await mongoSession.commitTransaction();
             console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedTasksCount, deletedMessagesCount});
 
-            // Clean up R2 attachments AFTER the DB transaction commits (best-effort — don't rollback DB on R2 failure)
-            let deletedAttachmentsCount: number = 0;
-            try {
-                deletedAttachmentsCount = await deleteSessionAttachments(sessionId);
-            } catch (r2Error: unknown) {
-                console.error(`R2: Failed to clean up attachments for session ${sessionId} — ${r2Error}`.red);
-            }
-
-            return {deletedSessions: deletedSessionCount, deletedTasks: deletedTasksCount, deletedMessages: deletedMessagesCount, deletedAttachments: deletedAttachmentsCount};
+            return {deletedSessions: deletedSessionCount, deletedTasks: deletedTasksCount, deletedMessages: deletedMessagesCount};
         } catch (error: unknown) {
             await mongoSession.abortTransaction();
             throw error;

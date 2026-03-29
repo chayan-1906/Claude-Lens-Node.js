@@ -8,7 +8,7 @@ import mongoose from "mongoose";
  *
  * Fails silently — a reclaim failure should never break the calling operation.
  */
-async function reclaimCollectionStorage(collectionName: string): Promise<void> {
+async function reclaimR2Storage(collectionName: string): Promise<void> {
     try {
         const db: mongoose.mongo.Db | undefined = mongoose.connection.db;
         if (!db) {
@@ -33,4 +33,4 @@ async function reclaimCollectionStorage(collectionName: string): Promise<void> {
     }
 }
 
-export {reclaimCollectionStorage};
+export {reclaimR2Storage};

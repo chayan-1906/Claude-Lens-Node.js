@@ -34,7 +34,6 @@ export interface IDeleteSessionResponse {
     deletedSessions?: number;
     deletedTasks?: number;
     deletedMessages?: number;
-    deletedAttachments?: number;
     error?: string;
 }
 
