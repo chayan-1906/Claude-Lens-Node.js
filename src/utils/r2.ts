@@ -90,6 +90,40 @@ async function deleteSessionAttachments(sessionId: string): Promise<number> {
 }
 
 /**
+ * Delete a specific set of R2 objects by their full public URLs.
+ * Extracts the object key from each URL using the configured publicUrl prefix.
+ * Silently skips any URL that doesn't start with the configured publicUrl.
+ * Returns the count of objects submitted for deletion.
+ */
+async function deleteAttachmentsByUrls(urls: string[]): Promise<number> {
+    console.debug('deleteAttachmentsByUrls:'.cyan, urls);
+    if (!urls.length) return 0;
+    const config: IR2Config | null = getR2Config();
+    if (!config) return 0;
+
+    const prefix: string = config.publicUrl + '/';
+    const keys: { Key: string }[] = urls
+        .filter((url: string) => url.startsWith(prefix))
+        .map((url: string) => ({Key: url.substring(prefix.length)}));
+
+    if (!keys.length) return 0;
+
+    const CHUNK_SIZE: number = 1000;
+    const promises: Promise<unknown>[] = [];
+    for (let i: number = 0; i < keys.length; i += CHUNK_SIZE) {
+        const chunk: { Key: string }[] = keys.slice(i, i + CHUNK_SIZE);
+        promises.push(getR2Client().send(new DeleteObjectsCommand({
+            Bucket: config.bucketName,
+            Delete: {Objects: chunk},
+        })));
+    }
+    await Promise.all(promises);
+
+    console.log(`R2: Deleted ${keys.length} object(s) by URL`.yellow);
+    return keys.length;
+}
+
+/**
  * Process attachments into Claude API content blocks + persisted metadata.
  * - Images          → upload to R2 → { type: 'image', source: { type: 'url', url } }
  * - PDFs            → upload to R2 → { type: 'document', source: { type: 'url', url } }
@@ -147,7 +181,7 @@ function isR2Configured(): boolean {
 /**
  * Upload a session JSONL backup to R2 at `<sessionId>/<sessionId>.jsonl`.
  * Best-effort: returns the public URL on success, or null if R2 is unconfigured / upload fails.
- * Stored under the same session prefix as attachments — deleteSessionAttachments() cleans up automatically.
+ * Stored under the same session prefix as attachments.
  */
 async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffer): Promise<string | null> {
     const config: IR2Config | null = getR2Config();
@@ -188,4 +222,4 @@ async function downloadJsonlBackup(sessionId: string): Promise<string | null> {
     }
 }
 
-export {initR2Client, isR2Configured, uploadToR2, uploadJsonlBackup, downloadJsonlBackup, deleteSessionAttachments, buildContentBlocks};
+export {initR2Client, uploadToR2, deleteSessionAttachments, deleteAttachmentsByUrls, buildContentBlocks, isR2Configured, uploadJsonlBackup, downloadJsonlBackup};

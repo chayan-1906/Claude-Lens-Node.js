@@ -1,10 +1,13 @@
 import "colors";
 import {Request, Response} from "express";
+import {IR2Config} from "../types/setup";
+import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
 import {ApiResponse} from "../utils/ApiResponse";
+import {getR2Config} from "../utils/localConfig";
 import {IReclaimR2StorageParams} from "../types/r2";
 import {generateMissingCode} from "../utils/generateErrorCodes";
-import {deleteSessionAttachments, isR2Configured} from "../utils/r2";
+import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 
 const reclaimR2StorageController = async (req: Request, res: Response) => {
     console.info('Controller: reclaimR2StorageController started'.bgBlue.white.bold);
@@ -32,16 +35,37 @@ const reclaimR2StorageController = async (req: Request, res: Response) => {
             return;
         }
 
-        let deletedAttachments: number = 0;
+        const config: IR2Config = getR2Config()!;
+        const urlsToDelete: string[] = [];
 
         if (sessionId) {
-            deletedAttachments = await deleteSessionAttachments(sessionId);
+            // Collect attachment URLs from all messages in this session
+            const session = await SessionModel.findOne({sessionId}, {_id: 1}).lean();
+            if (session) {
+                const messages = await MessageModel.find(
+                    {sessionInternalId: session._id, 'attachments.0': {$exists: true}},
+                    {attachments: 1},
+                ).lean();
+                messages.forEach(m => m.attachments?.forEach(a => urlsToDelete.push(a.r2Url)));
+            }
+            // JSONL backup stored at a deterministic key — include for full storage reclaim
+            urlsToDelete.push(`${config.publicUrl}/${sessionId}/${sessionId}.jsonl`);
         } else if (projectDir) {
-            const sessions = await SessionModel.find({projectDir}, {sessionId: 1}).lean();
-            for (const session of sessions) {
-                deletedAttachments += await deleteSessionAttachments(session.sessionId);
+            // Collect attachment URLs from all sessions in this project
+            const sessions = await SessionModel.find({projectDir}, {_id: 1, sessionId: 1}).lean();
+            if (sessions.length) {
+                const sessionInternalIds = sessions.map(session => session._id);
+                const messages = await MessageModel.find(
+                    {sessionInternalId: {$in: sessionInternalIds}, 'attachments.0': {$exists: true}},
+                    {attachments: 1},
+                ).lean();
+                messages.forEach(m => m.attachments?.forEach(a => urlsToDelete.push(a.r2Url)));
+                // JSONL backups for all sessions in this project
+                sessions.forEach(session => urlsToDelete.push(`${config.publicUrl}/${session.sessionId}/${session.sessionId}.jsonl`));
             }
         }
+
+        const deletedAttachments: number = await deleteAttachmentsByUrls(urlsToDelete);
 
         console.log('SUCCESS: R2 storage reclaimed'.bgGreen.bold, {sessionId, projectDir, deletedAttachments});
         res.status(200).send(new ApiResponse({

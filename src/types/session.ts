@@ -34,6 +34,7 @@ export interface IDeleteSessionResponse {
     deletedSessions?: number;
     deletedTasks?: number;
     deletedMessages?: number;
+    deletedAttachments?: number;
     error?: string;
 }
 
@@ -60,6 +61,7 @@ export interface IUpdateSessionParams {
 
 export interface IDeleteSessionParams {
     sessionId?: string;
+    reclaimR2?: boolean;
 }
 
 export interface IStubMessagesParams {

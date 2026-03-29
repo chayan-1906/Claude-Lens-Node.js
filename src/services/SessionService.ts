@@ -3,10 +3,13 @@ import fs from "fs";
 import path from "path";
 import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
+import {IR2Config} from "../types/setup";
 import MessageModel from "../models/Message";
 import {ContentBlock} from "../models/Message";
+import {getR2Config} from "../utils/localConfig";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import SessionModel, {ISession} from "../models/Session";
+import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse, IUpdateSessionParams, IUpdateSessionResponse} from "../types/session";
 
@@ -104,7 +107,7 @@ class SessionService {
         return {session};
     }
 
-    static async deleteSession({sessionId}: IDeleteSessionParams): Promise<IDeleteSessionResponse> {
+    static async deleteSession({sessionId, reclaimR2}: IDeleteSessionParams): Promise<IDeleteSessionResponse> {
         console.log('Service: SessionService.deleteSession called'.cyan.italic, {sessionId});
 
         if (!sessionId) {
@@ -118,34 +121,73 @@ class SessionService {
             return {error: generateNotFoundCode('session')};
         }
 
+        // Collect R2 URLs BEFORE deleting from MongoDB — must happen while data still exists.
+        // Extract from content blocks (image/document source.url, text file references) — this covers
+        // both session-ID-prefixed attachments and first-message temp-UUID-prefixed orphan dirs.
+        const r2UrlsToDelete: string[] = [];
+        if (reclaimR2 && isR2Configured()) {
+            const config: IR2Config = getR2Config()!;
+            const userMessages = await MessageModel.find(
+                {sessionInternalId: session._id, role: 'user'},
+                {content: 1},
+            ).lean();
+            for (const msg of userMessages) {
+                if (!Array.isArray(msg.content)) continue;
+                for (const block of msg.content as Record<string, unknown>[]) {
+                    if ((block.type === 'image' || block.type === 'document') &&
+                        (block.source as Record<string, unknown>)?.type === 'url') {
+                        const url: unknown = (block.source as Record<string, unknown>).url;
+                        if (typeof url === 'string') r2UrlsToDelete.push(url);
+                    } else if (block.type === 'text' && typeof block.text === 'string') {
+                        // Text/code file references: "File attached: <name> — <url>"
+                        const parts: string[] = block.text.split(' — ');
+                        if (parts.length >= 2 && parts[0].startsWith('File attached:')) {
+                            r2UrlsToDelete.push(parts[parts.length - 1]);
+                        }
+                    }
+                }
+            }
+            // JSONL backup is stored separately — not in message content
+            r2UrlsToDelete.push(`${config.publicUrl}/${sessionId}/${sessionId}.jsonl`);
+            console.debug('DEBUG: Collected R2 URLs for deletion'.cyan, {count: r2UrlsToDelete.length});
+        }
+
         console.debug('DEBUG: Starting delete transaction'.cyan, {sessionId});
         const mongoSession: ClientSession = await mongoose.startSession();
+        let deletedTasksCount: number = 0;
+        let deletedMessagesCount: number = 0;
+        let deletedSessionCount: number = 0;
         try {
             mongoSession.startTransaction();
 
-            const {deletedCount: deletedTasksCount} = await TaskModel.deleteMany(
+            ({deletedCount: deletedTasksCount} = await TaskModel.deleteMany(
                 {sessionId},
                 {session: mongoSession},
-            );
-            const {deletedCount: deletedMessagesCount} = await MessageModel.deleteMany(
+            ));
+            ({deletedCount: deletedMessagesCount} = await MessageModel.deleteMany(
                 {sessionInternalId: session._id},
                 {session: mongoSession},
-            );
-            const {deletedCount: deletedSessionCount} = await SessionModel.deleteOne(
+            ));
+            ({deletedCount: deletedSessionCount} = await SessionModel.deleteOne(
                 {sessionId},
                 {session: mongoSession},
-            );
+            ));
 
             await mongoSession.commitTransaction();
             console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedTasksCount, deletedMessagesCount});
-
-            return {deletedSessions: deletedSessionCount, deletedTasks: deletedTasksCount, deletedMessages: deletedMessagesCount};
         } catch (error: unknown) {
             await mongoSession.abortTransaction();
             throw error;
         } finally {
             await mongoSession.endSession();
         }
+
+        // After commit: delete pre-collected R2 objects (URLs captured before MongoDB was cleared)
+        const deletedAttachments: number = r2UrlsToDelete.length
+            ? await deleteAttachmentsByUrls(r2UrlsToDelete).catch(() => 0)
+            : 0;
+
+        return {deletedSessions: deletedSessionCount, deletedTasks: deletedTasksCount, deletedMessages: deletedMessagesCount, deletedAttachments};
     }
 
     static async stubMessages({sessionId, messageIds}: IStubMessagesParams): Promise<IStubMessagesResponse> {

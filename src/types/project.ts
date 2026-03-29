@@ -26,4 +26,5 @@ export interface IDeleteProjectResponse {
 
 export interface IDeleteProjectParams {
     projectDir?: string;
+    reclaimR2?: boolean;
 }
