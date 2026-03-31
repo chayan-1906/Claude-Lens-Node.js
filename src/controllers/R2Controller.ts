@@ -39,14 +39,28 @@ const reclaimR2StorageController = async (req: Request, res: Response) => {
         const urlsToDelete: string[] = [];
 
         if (sessionId) {
-            // Collect attachment URLs from all messages in this session
             const session = await SessionModel.findOne({sessionId}, {_id: 1}).lean();
             if (session) {
-                const messages = await MessageModel.find(
-                    {sessionInternalId: session._id, 'attachments.0': {$exists: true}},
-                    {attachments: 1},
+                const userMessages = await MessageModel.find(
+                    {sessionInternalId: session._id, role: 'user'},
+                    {content: 1},
                 ).lean();
-                messages.forEach(m => m.attachments?.forEach(a => urlsToDelete.push(a.r2Url)));
+                for (const msg of userMessages) {
+                    if (!Array.isArray(msg.content)) continue;
+                    for (const block of msg.content as Record<string, unknown>[]) {
+                        if ((block.type === 'image' || block.type === 'document') &&
+                            (block.source as Record<string, unknown>)?.type === 'url') {
+                            const url: unknown = (block.source as Record<string, unknown>).url;
+                            if (typeof url === 'string') urlsToDelete.push(url);
+                        } else if (block.type === 'text' && typeof block.text === 'string') {
+                            // Text/code file references: "File attached: <name> — <url>"
+                            const parts: string[] = block.text.split(' — ');
+                            if (parts.length >= 2 && parts[0].startsWith('File attached:')) {
+                                urlsToDelete.push(parts[parts.length - 1]);
+                            }
+                        }
+                    }
+                }
             }
             // JSONL backup stored at a deterministic key — include for full storage reclaim
             urlsToDelete.push(`${config.publicUrl}/${sessionId}/${sessionId}.jsonl`);
@@ -55,11 +69,26 @@ const reclaimR2StorageController = async (req: Request, res: Response) => {
             const sessions = await SessionModel.find({projectDir}, {_id: 1, sessionId: 1}).lean();
             if (sessions.length) {
                 const sessionInternalIds = sessions.map(session => session._id);
-                const messages = await MessageModel.find(
-                    {sessionInternalId: {$in: sessionInternalIds}, 'attachments.0': {$exists: true}},
-                    {attachments: 1},
+                const userMessages = await MessageModel.find(
+                    {sessionInternalId: {$in: sessionInternalIds}, role: 'user'},
+                    {content: 1},
                 ).lean();
-                messages.forEach(m => m.attachments?.forEach(a => urlsToDelete.push(a.r2Url)));
+                for (const msg of userMessages) {
+                    if (!Array.isArray(msg.content)) continue;
+                    for (const block of msg.content as Record<string, unknown>[]) {
+                        if ((block.type === 'image' || block.type === 'document') &&
+                            (block.source as Record<string, unknown>)?.type === 'url') {
+                            const url: unknown = (block.source as Record<string, unknown>).url;
+                            if (typeof url === 'string') urlsToDelete.push(url);
+                        } else if (block.type === 'text' && typeof block.text === 'string') {
+                            // Text/code file references: "File attached: <name> — <url>"
+                            const parts: string[] = block.text.split(' — ');
+                            if (parts.length >= 2 && parts[0].startsWith('File attached:')) {
+                                urlsToDelete.push(parts[parts.length - 1]);
+                            }
+                        }
+                    }
+                }
                 // JSONL backups for all sessions in this project
                 sessions.forEach(session => urlsToDelete.push(`${config.publicUrl}/${session.sessionId}/${session.sessionId}.jsonl`));
             }
