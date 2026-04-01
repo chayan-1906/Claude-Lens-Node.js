@@ -3,6 +3,12 @@ import {ISession} from "../models/Session";
 
 /** ------------- Constants and Type Aliases ------------- */
 
+export interface IGetSessionPagination {
+    limit: number;
+    totalCount: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+}
 
 
 /** ------------- API response types ------------- */
@@ -22,6 +28,7 @@ export interface IGetAllSessionsResponse {
 export interface IGetSessionResponse {
     session?: ISession;
     messages?: IMessage[];
+    pagination?: IGetSessionPagination;
     error?: string;
 }
 
@@ -51,6 +58,8 @@ export interface IGetAllSessionsParams {
 
 export interface IGetSessionParams {
     sessionId?: string;
+    limit?: number;
+    cursor?: string;
 }
 
 export interface IUpdateSessionParams {

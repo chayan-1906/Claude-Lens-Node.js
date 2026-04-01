@@ -4,14 +4,13 @@ import path from "path";
 import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IR2Config} from "../types/setup";
-import MessageModel from "../models/Message";
-import {ContentBlock} from "../models/Message";
 import {getR2Config} from "../utils/localConfig";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import SessionModel, {ISession} from "../models/Session";
 import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
+import MessageModel, {ContentBlock, IMessage} from "../models/Message";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse, IUpdateSessionParams, IUpdateSessionResponse} from "../types/session";
+import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionPagination, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse, IUpdateSessionParams, IUpdateSessionResponse} from "../types/session";
 
 class SessionService {
     static async getAllSessions({title, source, projectDir, page = 1, limit = 20}: IGetAllSessionsParams): Promise<IGetAllSessionsResponse> {
@@ -45,8 +44,8 @@ class SessionService {
         return {sessions, pagination};
     }
 
-    static async getSessionBySessionId(sessionId: string): Promise<IGetSessionResponse> {
-        console.log('Service: SessionService.getSessionBySessionId called'.cyan.italic, {sessionId});
+    static async getSessionBySessionId(sessionId: string, limit: number = 50, cursor?: string): Promise<IGetSessionResponse> {
+        console.log('Service: SessionService.getSessionBySessionId called'.cyan.italic, {sessionId, limit, cursor});
 
         if (!sessionId) {
             console.debug('DEBUG: Missing sessionId, returning error'.cyan);
@@ -59,11 +58,49 @@ class SessionService {
             return {error: generateNotFoundCode('session')};
         }
 
-        const messages = await MessageModel.find({sessionInternalId: session._id}).sort({timestamp: 1});
+        const messageMeta: Array<Pick<IMessage, 'uuid'>> = await MessageModel.find(
+            {sessionInternalId: session._id},
+            {uuid: 1},
+            {sort: {timestamp: 1}},
+        ).lean();
+        const totalCount: number = messageMeta.length;
 
-        console.log('Database: Session fetched'.cyan, {sessionId, messages: messages.length, contextTokensUsed: session.contextTokensUsed, contextWindowSize: session.contextWindowSize});
+        let endIndex: number = totalCount;
+        if (cursor) {
+            const cursorIndex: number = messageMeta.findIndex((message: Pick<IMessage, 'uuid'>) => message.uuid === cursor);
+            if (cursorIndex === -1) {
+                console.debug('DEBUG: Cursor not found in session messages'.cyan, {sessionId, cursor});
+                return {error: generateInvalidCode('cursor')};
+            }
+            endIndex = cursorIndex;
+        }
 
-        return {session, messages};
+        const startIndex: number = Math.max(0, endIndex - limit);
+        const pageMeta: Array<Pick<IMessage, 'uuid'>> = messageMeta.slice(startIndex, endIndex);
+        const pageUuids: string[] = pageMeta.map((message: Pick<IMessage, 'uuid'>) => message.uuid);
+
+        const messageDocs: IMessage[] = pageUuids.length > 0
+            ? await MessageModel.find({uuid: {$in: pageUuids}}).sort({timestamp: 1, _id: 1})
+            : [];
+
+        const pagination: IGetSessionPagination = {
+            limit,
+            totalCount,
+            hasMore: startIndex > 0,
+            nextCursor: startIndex > 0 ? pageMeta[0].uuid : null,
+        };
+
+        console.log('Database: Session fetched'.cyan, {
+            sessionId,
+            totalMessages: messageMeta.length,
+            pageMessages: messageDocs.length,
+            hasMore: pagination.hasMore,
+            nextCursor: pagination.nextCursor,
+            contextTokensUsed: session.contextTokensUsed,
+            contextWindowSize: session.contextWindowSize,
+        });
+
+        return {session, messages: messageDocs, pagination};
     }
 
     static async updateSession({sessionId, title, description}: IUpdateSessionParams): Promise<IUpdateSessionResponse> {

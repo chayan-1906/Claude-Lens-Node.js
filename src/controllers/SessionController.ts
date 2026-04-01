@@ -59,10 +59,14 @@ const getSessionController = async (req: Request, res: Response) => {
 
     try {
         const {sessionId}: Partial<IGetSessionParams> = req.params;
-        console.debug('DEBUG: Received params'.cyan, {sessionId});
+        const limit: number = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const cursor: string | undefined = typeof req.query.cursor === 'string' && req.query.cursor.trim().length > 0
+            ? req.query.cursor.trim()
+            : undefined;
+        console.debug('DEBUG: Received params'.cyan, {sessionId, limit, cursor});
 
-        const {session, messages, error} = await SessionService.getSessionBySessionId(sessionId || '');
-        if (error || !session || !messages) {
+        const {session, messages, pagination, error} = await SessionService.getSessionBySessionId(sessionId || '', limit, cursor);
+        if (error || !session || !messages || !pagination) {
             console.warn('WARN: SessionService.getSessionBySessionId returned error'.yellow.bold, {error, sessionId});
             let errorMsg: string = 'Failed to retrieve session!';
             let statusCode: number = 500;
@@ -70,6 +74,9 @@ const getSessionController = async (req: Request, res: Response) => {
             if (error === generateInvalidCode('sessionId')) {
                 statusCode = 400;
                 errorMsg = `Invalid sessionId: ${sessionId}`;
+            } else if (error === generateInvalidCode('cursor')) {
+                statusCode = 400;
+                errorMsg = `Invalid cursor for sessionId: ${sessionId}`;
             } else if (error === generateNotFoundCode('session')) {
                 statusCode = 404;
                 errorMsg = `No session found with sessionId: ${sessionId}`;
@@ -95,6 +102,7 @@ const getSessionController = async (req: Request, res: Response) => {
             message: 'Session has been fetched!',
             session,
             messages,
+            pagination,
             localJsonlAvailable,
         }));
     } catch (error: any) {
