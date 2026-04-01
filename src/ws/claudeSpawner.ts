@@ -19,6 +19,7 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         '--output-format', 'stream-json',
         '--input-format', 'stream-json',
         '--include-partial-messages',
+        '--allowedTools', 'mcp__*',
         // Instruct Claude to use Bash for .claude/ file writes. The Edit tool has a
         // hardcoded protection that blocks edits to .claude/ directories in non-interactive
         // mode (no flag or setting can override it). Bash(cat/echo redirect) works fine.
