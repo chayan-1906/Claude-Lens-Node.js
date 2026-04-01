@@ -128,6 +128,11 @@ const MessageSchema = new Schema<IMessage>({
     },
 });
 
+// Compound index: covers the primary query pattern (find by session + sort by timestamp).
+// Without this, MongoDB must load all session messages into memory to sort them,
+// which exceeds the 33MB Atlas sort limit on large sessions.
+MessageSchema.index({sessionInternalId: 1, timestamp: 1});
+
 /** Mongoose model for Claude Code messages */
 const MessageModel: IMessageModel = model<IMessage, IMessageModel>('Message', MessageSchema);
 
