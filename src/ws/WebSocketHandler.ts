@@ -12,9 +12,9 @@ import MemoryModel from "../models/Memory";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
-import {NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
+import {NON_ALPHANUMERIC_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
 import {resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
@@ -1131,6 +1131,17 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             }
                         }
                         // MongoDB error or session not in DB — fall through and let claude handle it
+                    }
+
+                    // new_session: restore memories from MongoDB so Claude has project context
+                    // from day one on a machine that has never run this project locally.
+                    if (clientMessage.type === 'new_session' && clientMessage.projectDir) {
+                        const newSessionHash: string = toProjectDirHash(clientMessage.projectDir.replace(TRAILING_SLASHES_REGEX, ''));
+                        try {
+                            await reconstructAndSaveMemory(newSessionHash);
+                        } catch (memoryError: unknown) {
+                            console.error(`WebSocket: Failed to restore memory files for new session — ${memoryError}`.red);
+                        }
                     }
 
                     const spawnMessage: INewSessionMessage | IResumeSessionMessage = (clientMessage.type === 'resume_session' && clientMessage.newProjectDir)
