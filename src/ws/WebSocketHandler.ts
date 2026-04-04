@@ -420,11 +420,6 @@ async function reconstructAndSaveMemory(localProjectDirHash: string): Promise<bo
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
     const memoryDir: string = path.join(claudeProjectsDir, localProjectDirHash, 'memory');
 
-    // Skip if memory dir already exists with files
-    if (fs.existsSync(memoryDir) && fs.readdirSync(memoryDir).length > 0) {
-        return false;
-    }
-
     // Query MongoDB with the canonical hash — sync always stores canonical.
     // Write files to the local hash directory so Claude finds them.
     const canonicalHash: string = resolveProjectDirHash(localProjectDirHash);
@@ -435,6 +430,7 @@ async function reconstructAndSaveMemory(localProjectDirHash: string): Promise<bo
 
     fs.mkdirSync(memoryDir, {recursive: true});
 
+    let writtenCount: number = 0;
     for (const memory of memories) {
         // Extract relative path after /memory/ marker — mirrors ExportService pattern
         const markerIndex: number = memory.filePath.lastIndexOf(MEMORY_PATH_MARKER);
@@ -442,12 +438,17 @@ async function reconstructAndSaveMemory(localProjectDirHash: string): Promise<bo
             ? memory.filePath.substring(markerIndex + MEMORY_PATH_MARKER.length)
             : path.basename(memory.filePath);
         const outputPath: string = path.join(memoryDir, relPath);
+        // Per-file merge: only write files missing from disk — preserves local edits
+        if (fs.existsSync(outputPath)) continue;
         fs.mkdirSync(path.dirname(outputPath), {recursive: true});
         fs.writeFileSync(outputPath, memory.content, 'utf-8');
+        writtenCount++;
     }
 
-    console.log(`WebSocket: Reconstructed ${memories.length} memory file(s) at ${memoryDir}`.cyan);
-    return true;
+    if (writtenCount > 0) {
+        console.log(`WebSocket: Reconstructed ${writtenCount}/${memories.length} memory file(s) at ${memoryDir}`.cyan);
+    }
+    return writtenCount > 0;
 }
 
 /**
@@ -1088,12 +1089,6 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                     console.error(`WebSocket: Failed to reconstruct tasks — ${taskError}`.red);
                                 }
 
-                                try {
-                                    await reconstructAndSaveMemory(localProjectDirHash);
-                                } catch (memoryError: unknown) {
-                                    console.error(`WebSocket: Failed to reconstruct memory files — ${memoryError}`.red);
-                                }
-
                                 // Set cwd to the local path so claude --resume hashes correctly
                                 clientMessage.projectDir = localRawProjectDir;
                                 console.log(`WebSocket: [TRACE] Reconstruction done — cwd set to: ${clientMessage.projectDir}`.cyan);
@@ -1102,6 +1097,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 // to locate the session file, so it must match the local project dir
                                 clientMessage.projectDir = localRawProjectDir;
                                 console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${localRawProjectDir}`.cyan);
+                            }
+
+                            // Always attempt memory restore — runs in both localAvailable and reconstruction
+                            // paths. reconstructAndSaveMemory is idempotent: no-ops if the memory dir
+                            // already exists with files on disk.
+                            try {
+                                await reconstructAndSaveMemory(localProjectDirHash);
+                            } catch (memoryError: unknown) {
+                                console.error(`WebSocket: Failed to reconstruct memory files — ${memoryError}`.red);
                             }
 
                             // Repair: strip trailing orphaned tool_use entries from the JSONL.
