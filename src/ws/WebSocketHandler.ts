@@ -16,8 +16,8 @@ import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {NON_ALPHANUMERIC_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
-import {resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
+import {resolveCanonicalPath, resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {
     ClientMessage,
     IAttachmentMeta,
@@ -770,14 +770,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             const sessionId: string = event.session_id as string;
             const cwd: string = (event.cwd as string) || '';
             const model: string = (event.model as string) || '';
-            const projectDir: string = cwd.replace(NON_ALPHANUMERIC_REGEX, '-');
+            const canonicalCwd: string = resolveCanonicalPath(cwd);
+            const projectDir: string = toProjectDirHash(canonicalCwd);
 
             try {
                 const session = await SessionModel.findOneAndUpdate(
                     {sessionId},
                     {
                         $setOnInsert: {title: '(live session)', source: ESessionSource.WEBUI},
-                        $set: {projectDir, rawProjectDir: cwd, aiModel: model},
+                        $set: {projectDir, rawProjectDir: canonicalCwd, aiModel: model},
                     },
                     {upsert: true, returnDocument: 'after'},
                 );
