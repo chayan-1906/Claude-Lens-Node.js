@@ -22,7 +22,7 @@ type ToolUseBlock = {
 type ToolResultBlock = {
     type: 'tool_result';
     tool_use_id: string;
-    content: string;
+    content: string | Record<string, unknown>[];
     is_error: boolean;
 };
 

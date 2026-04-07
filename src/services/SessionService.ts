@@ -263,7 +263,15 @@ class SessionService {
 
             message.content = (message.content as ContentBlock[]).map((block: ContentBlock) => {
                 if (block.type === 'tool_result' && !(block as any)._stubbed) {
-                    const tokenCount: number = Math.round((block.content as string).length / 4);
+                    let charCount: number;
+                    if (typeof block.content === 'string') {
+                        charCount = block.content.length;
+                    } else if (Array.isArray(block.content)) {
+                        charCount = JSON.stringify(block.content).length;
+                    } else {
+                        charCount = 0;
+                    }
+                    const tokenCount: number = Math.round(charCount / 4);
                     modified = true;
                     blockStubs.push({tool_use_id: block.tool_use_id, tokenCount});
                     return {
