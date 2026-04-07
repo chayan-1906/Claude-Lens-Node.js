@@ -30,6 +30,7 @@ export interface INewSessionMessage {
     effort?: string;
     thinking?: boolean;
     attachments?: IAttachment[];
+    allowedDirs?: string[];
 }
 
 export interface IResumeSessionMessage {
@@ -42,6 +43,7 @@ export interface IResumeSessionMessage {
     effort?: string;
     thinking?: boolean;
     attachments?: IAttachment[];
+    allowedDirs?: string[];
 }
 
 export interface ISendMessageMessage {

@@ -42,6 +42,12 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         args.push('--settings', JSON.stringify({alwaysThinkingEnabled: message.thinking}));
     }
 
+    if (message.allowedDirs?.length) {
+        for (const dir of message.allowedDirs) {
+            args.push('--add-dir', dir);
+        }
+    }
+
     console.debug('args:'.cyan, args);
     return args;
 }
