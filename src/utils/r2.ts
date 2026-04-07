@@ -33,12 +33,12 @@ function initR2Client(): void {
     console.debug('DEBUG: R2 S3Client initialized'.cyan);
 }
 
-/** Return the current S3Client, initializing on first call if needed */
-function getR2Client(): S3Client {
+/** Return the current S3Client, initializing on first call if needed. Returns null when R2 is unconfigured. */
+function getR2Client(): S3Client | null {
     if (!r2Client) {
         initR2Client();
     }
-    return r2Client!;
+    return r2Client;
 }
 
 /**
@@ -47,17 +47,18 @@ function getR2Client(): S3Client {
  */
 async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<string> {
     const config: IR2Config | null = getR2Config();
+    if (!config) throw new Error('R2 is not configured — cannot upload attachment');
     const key: string = `${sessionId}/${Date.now()}-${attachment.name}`;
     const buffer: Buffer = Buffer.from(attachment.data, 'base64');
 
-    await getR2Client().send(new PutObjectCommand({
-        Bucket: config!.bucketName,
+    await getR2Client()!.send(new PutObjectCommand({
+        Bucket: config.bucketName,
         Key: key,
         Body: buffer,
         ContentType: attachment.mimeType,
     }));
 
-    const publicUrl: string = `${config!.publicUrl}/${key}`;
+    const publicUrl: string = `${config.publicUrl}/${key}`;
     console.log(`R2: Uploaded ${attachment.name} (${(buffer.length / 1024).toFixed(1)} KB) → ${publicUrl}`.green);
     return publicUrl;
 }
@@ -68,8 +69,9 @@ async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<s
  */
 async function deleteSessionAttachments(sessionId: string): Promise<number> {
     const config: IR2Config | null = getR2Config();
-    const listed = await getR2Client().send(new ListObjectsV2Command({
-        Bucket: config!.bucketName,
+    if (!config) return 0;
+    const listed = await getR2Client()!.send(new ListObjectsV2Command({
+        Bucket: config.bucketName,
         Prefix: `${sessionId}/`,
     }));
 
@@ -77,8 +79,8 @@ async function deleteSessionAttachments(sessionId: string): Promise<number> {
         return 0;
     }
 
-    await getR2Client().send(new DeleteObjectsCommand({
-        Bucket: config!.bucketName,
+    await getR2Client()!.send(new DeleteObjectsCommand({
+        Bucket: config.bucketName,
         Delete: {
             Objects: listed.Contents.map((object: _Object) => ({Key: object.Key!})),
         },
@@ -110,9 +112,9 @@ async function deleteAttachmentsByUrls(urls: string[]): Promise<number> {
 
     const CHUNK_SIZE: number = 1000;
     const promises: Promise<unknown>[] = [];
-    for (let i: number = 0; i < keys.length; i += CHUNK_SIZE) {
-        const chunk: { Key: string }[] = keys.slice(i, i + CHUNK_SIZE);
-        promises.push(getR2Client().send(new DeleteObjectsCommand({
+    for (let index: number = 0; index < keys.length; index += CHUNK_SIZE) {
+        const chunk: { Key: string }[] = keys.slice(index, index + CHUNK_SIZE);
+        promises.push(getR2Client()!.send(new DeleteObjectsCommand({
             Bucket: config.bucketName,
             Delete: {Objects: chunk},
         })));
@@ -132,8 +134,19 @@ async function deleteAttachmentsByUrls(urls: string[]): Promise<number> {
  * Returns both content blocks (for Claude CLI stdin) and attachment metadata (for MongoDB).
  */
 async function buildContentBlocks(attachments: IAttachment[], sessionId: string, text: string): Promise<IBuildContentBlocksResult> {
+    const config: IR2Config | null = getR2Config();
     const blocks: Record<string, unknown>[] = [];
     const attachmentMeta: IAttachmentMeta[] = [];
+
+    if (!config) {
+        if (!text || !text.trim()) {
+            // Attachments-only with no R2 — nothing to send to Claude
+            throw new Error('R2 is not configured — attachments cannot be uploaded');
+        }
+        // R2 unconfigured but text is present — skip attachments, return text-only blocks
+        blocks.push({type: 'text', text});
+        return {blocks, attachmentMeta};
+    }
 
     for (const attachment of attachments) {
         // Convert HEIC/HEIF → JPEG before upload — Claude API only accepts JPEG/PNG/GIF/WebP
@@ -188,7 +201,7 @@ async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffe
     if (!config) return null;
     try {
         const key: string = `${sessionId}/${sessionId}.jsonl`;
-        await getR2Client().send(new PutObjectCommand({
+        await getR2Client()!.send(new PutObjectCommand({
             Bucket: config.bucketName,
             Key: key,
             Body: jsonlContent,
@@ -212,7 +225,7 @@ async function downloadJsonlBackup(sessionId: string): Promise<string | null> {
     if (!config) return null;
     try {
         const key: string = `${sessionId}/${sessionId}.jsonl`;
-        const resp = await getR2Client().send(new GetObjectCommand({
+        const resp = await getR2Client()!.send(new GetObjectCommand({
             Bucket: config.bucketName,
             Key: key,
         }));
