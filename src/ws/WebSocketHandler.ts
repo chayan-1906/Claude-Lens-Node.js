@@ -14,7 +14,7 @@ import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
-import {NON_ALPHANUMERIC_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
+import {TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
 import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
 import {resolveCanonicalPath, resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
@@ -747,7 +747,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         const existing: string = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
                         const oldStr: string = (toolInput.old_string as string) ?? '';
                         const newStr: string = (toolInput.new_string as string) ?? '';
-                        newContent = existing.replace(oldStr, newStr);
+                        const replaceAll: boolean = (toolInput.replace_all as boolean) ?? false;
+                        newContent = (replaceAll && oldStr)
+                            ? existing.split(oldStr).join(newStr)
+                            : existing.replace(oldStr, newStr);
                     }
 
                     console.log(`IdeService: Opening diff for ${filePath}`.cyan);
