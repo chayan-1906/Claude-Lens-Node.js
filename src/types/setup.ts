@@ -25,6 +25,14 @@ export interface IPathMapping {
     canonicalPath: string;   // MUST be one of the entries in paths[]
 }
 
+/** A detected Claude account from a ~/.claude-.../ directory */
+export interface IClaudeAccount {
+    configDir: string;
+    email: string | null;
+    label: string;
+    isLoggedIn: boolean;
+}
+
 /** Current config schema with multiple configurations */
 export interface ILocalConfig {
     configurations: IMongoConfiguration[];
@@ -33,6 +41,7 @@ export interface ILocalConfig {
     r2Config?: IR2Config;
     ttsVoiceId?: string;
     ttsRate?: number;
+    claudeConfigDir?: string;
 }
 
 /** POST /api/v1/setup/configurations — request body */
@@ -82,4 +91,9 @@ export interface ISaveR2ConfigBody {
     endpoint?: string;
     publicUrl?: string;
     bucketName?: string;
+}
+
+/** POST /api/v1/setup/claude-account — request body */
+export interface ISaveClaudeAccountBody {
+    claudeConfigDir?: string;
 }

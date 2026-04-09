@@ -99,4 +99,35 @@ function saveTtsSettings({voiceId, rate}: {voiceId?: string; rate?: number}): vo
     console.debug('DEBUG: TTS settings saved'.cyan, {voiceId, rate});
 }
 
-export {getLocalConfig, saveLocalConfig, generateRandomColor, getR2Config, saveR2Config, getTtsSettings, saveTtsSettings};
+/**
+ * Read claudeConfigDir from ~/.claude-lens/config.json
+ * Returns the stored value, or undefined if not set (use Claude CLI default).
+ */
+function getClaudeConfigDir(): string | undefined {
+    const localConfig: ILocalConfig | null = getLocalConfig();
+    return localConfig?.claudeConfigDir;
+}
+
+/**
+ * Write claudeConfigDir into ~/.claude-lens/config.json
+ * Preserves all other config keys.
+ */
+function saveClaudeConfigDir(configDir: string): void {
+    const localConfig: ILocalConfig = getLocalConfig() ?? {configurations: [], activeConfigId: '', pathMappings: []};
+    localConfig.claudeConfigDir = configDir;
+    saveLocalConfig(localConfig);
+    console.debug('DEBUG: claudeConfigDir saved'.cyan, {configDir});
+}
+
+/**
+ * Remove claudeConfigDir from ~/.claude-lens/config.json (revert to system default).
+ */
+function clearClaudeConfigDir(): void {
+    const localConfig: ILocalConfig | null = getLocalConfig();
+    if (!localConfig) return;
+    delete localConfig.claudeConfigDir;
+    saveLocalConfig(localConfig);
+    console.debug('DEBUG: claudeConfigDir cleared'.cyan);
+}
+
+export {getLocalConfig, saveLocalConfig, generateRandomColor, getR2Config, saveR2Config, getTtsSettings, saveTtsSettings, getClaudeConfigDir, saveClaudeConfigDir, clearClaudeConfigDir};

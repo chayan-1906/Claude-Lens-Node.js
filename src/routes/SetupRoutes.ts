@@ -6,12 +6,15 @@ import {
     deleteConfigurationController,
     deletePathMappingController,
     editConfigurationController,
+    getAccountsController,
+    getClaudeAccountController,
     getConfigProjectsController,
     getConfigurationsController,
     getPathMappingsController,
     getR2ConfigController,
     getSetupStatusController,
     mergePathMappingController,
+    saveClaudeAccountController,
     saveR2ConfigController,
     testConfigurationController,
     updatePathMappingController,
@@ -40,5 +43,10 @@ router.post('/path-mappings', createPathMappingController);
 router.put('/path-mappings/:mappingId', updatePathMappingController);
 router.delete('/path-mappings/:mappingId', deletePathMappingController);
 router.post('/path-mappings/:mappingId/merge', mergePathMappingController);
+
+// Claude account routes
+router.get('/accounts', getAccountsController);
+router.get('/claude-account', getClaudeAccountController);
+router.post('/claude-account', saveClaudeAccountController);
 
 export default router;

@@ -1,4 +1,7 @@
 import "colors";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import mongoose from "mongoose";
 import {randomUUID} from "crypto";
 import {Request, Response} from "express";
@@ -10,10 +13,11 @@ import {ApiResponse} from "../utils/ApiResponse";
 import {toProjectDirHash} from "../utils/resolveProjectDir";
 import {R2_ENDPOINT_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {generateRandomColor, getLocalConfig, getR2Config, saveLocalConfig, saveR2Config} from "../utils/localConfig";
+import {clearClaudeConfigDir, generateRandomColor, getLocalConfig, getR2Config, saveClaudeConfigDir, saveLocalConfig, saveR2Config} from "../utils/localConfig";
 import type {
     IAddConfigurationBody,
     IAddPathMappingBody,
+    IClaudeAccount,
     IConfigIdParams,
     IEditConfigurationBody,
     IEditPathMappingBody,
@@ -22,6 +26,7 @@ import type {
     IMongoConfiguration,
     IPathMapping,
     IR2Config,
+    ISaveClaudeAccountBody,
     ISaveR2ConfigBody,
 } from "../types/setup";
 
@@ -1010,6 +1015,153 @@ const saveR2ConfigController = async (req: Request, res: Response) => {
     }
 }
 
+// ======================== Claude Account Controllers ========================
+
+/**
+ * GET /api/v1/setup/accounts
+ * Scans $HOME for ~/.claude-.../ directories and returns each as a selectable Claude account.
+ * Only includes dirs that contain Claude CLI indicator files (settings.json, history.jsonl,
+ * memory.json, accounts.json) — this excludes non-Claude dirs like ~/.claude-lens/.
+ * Label is derived from the directory name: .claude → "Default", .claude-personal → "Personal".
+ */
+const CLAUDE_CLI_INDICATORS: string[] = ['settings.json', 'history.jsonl', 'memory.json', 'accounts.json'];
+
+const getAccountsController = async (req: Request, res: Response) => {
+    console.info('Controller: getAccountsController started'.bgBlue.white.bold);
+
+    try {
+        const HOME: string = process.env.HOME || os.homedir();
+
+        const defaultClaudeDir: string = path.join(HOME, '.claude');
+
+        const entries: fs.Dirent[] = fs.readdirSync(HOME, {withFileTypes: true});
+        const claudeDirs: string[] = entries
+            .filter((entry: fs.Dirent) => entry.isDirectory() && /^\.claude/.test(entry.name))
+            .map((entry: fs.Dirent) => path.join(HOME, entry.name))
+            .filter((configDir: string) =>
+                // Exclude ~/.claude/ — it's the system default, explicitly passing it as env var causes issues
+                configDir !== defaultClaudeDir
+                // Only include dirs with Claude CLI indicator files (excludes ~/.claude-lens/ etc.)
+                && CLAUDE_CLI_INDICATORS.some((indicator: string) => fs.existsSync(path.join(configDir, indicator))),
+            );
+
+        const accounts: IClaudeAccount[] = claudeDirs.map((configDir: string) => {
+            const dirName: string = path.basename(configDir);
+            // .claude → "Default", .claude-personal → "Personal", .claude-remix → "Remix"
+            const suffix: string = dirName.replace(/^\.claude/, '').replace(/^-/, '');
+            const label: string = suffix
+                ? suffix.charAt(0).toUpperCase() + suffix.slice(1)
+                : 'Default';
+
+            return {
+                configDir,
+                email: null,
+                label,
+                isLoggedIn: true,
+            };
+        });
+
+        console.log('SUCCESS: Accounts fetched'.bgGreen.bold, {count: accounts.length});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Accounts fetched!',
+            accounts,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getAccountsController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while fetching accounts!',
+        }));
+    }
+}
+
+/**
+ * GET /api/v1/setup/claude-account
+ * Returns the currently saved claudeConfigDir from ~/.claude-lens/config.json.
+ */
+const getClaudeAccountController = async (req: Request, res: Response) => {
+    console.info('Controller: getClaudeAccountController started'.bgBlue.white.bold);
+
+    try {
+        const localConfig: ILocalConfig | null = getLocalConfig();
+        const claudeConfigDir: string | null = localConfig?.claudeConfigDir ?? null;
+
+        console.log('SUCCESS: Claude config dir fetched'.bgGreen.bold, {claudeConfigDir});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Claude config dir fetched!',
+            claudeConfigDir,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getClaudeAccountController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while fetching Claude config dir!',
+        }));
+    }
+}
+
+/**
+ * POST /api/v1/setup/claude-account
+ * Saves the selected CLAUDE_CONFIG_DIR to ~/.claude-lens/config.json.
+ * Only accepts paths matching $HOME/.claude* to prevent path traversal.
+ */
+const saveClaudeAccountController = async (req: Request, res: Response) => {
+    console.info('Controller: saveClaudeAccountController started'.bgBlue.white.bold);
+
+    try {
+        const {claudeConfigDir}: ISaveClaudeAccountBody = req.body;
+
+        // Empty string = revert to system default (clear any saved override)
+        if (claudeConfigDir === '') {
+            clearClaudeConfigDir();
+            console.log('SUCCESS: Claude config dir cleared (system default)'.bgGreen.bold);
+            res.status(200).send(new ApiResponse({
+                success: true,
+                message: 'Reverted to system default!',
+            }));
+            return;
+        }
+
+        if (!claudeConfigDir) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('claudeConfigDir'),
+                errorMsg: 'claudeConfigDir is required!',
+            }));
+            return;
+        }
+
+        const HOME: string = process.env.HOME || os.homedir();
+        const resolvedDir: string = path.resolve(claudeConfigDir.replace(/^~/, HOME));
+        const isValid: boolean = resolvedDir.startsWith(HOME + path.sep) && /^\.claude/.test(path.basename(resolvedDir));
+
+        if (!isValid) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateInvalidCode('claudeConfigDir'),
+                errorMsg: 'claudeConfigDir must be a ~/.claude* directory!',
+            }));
+            return;
+        }
+
+        saveClaudeConfigDir(resolvedDir);
+
+        console.log('SUCCESS: Claude config dir saved'.bgGreen.bold, {claudeConfigDir: resolvedDir});
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Claude config dir saved!',
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: saveClaudeAccountController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while saving Claude config dir!',
+        }));
+    }
+}
+
 export {
     getSetupStatusController,
     getConfigurationsController,
@@ -1026,4 +1178,7 @@ export {
     mergePathMappingController,
     getR2ConfigController,
     saveR2ConfigController,
+    getAccountsController,
+    getClaudeAccountController,
+    saveClaudeAccountController,
 };

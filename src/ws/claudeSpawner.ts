@@ -2,6 +2,7 @@ import "colors";
 import {WebSocket} from "ws";
 import {ChildProcess, spawn} from "child_process";
 import {IMessage} from "../models/Message";
+import {getClaudeConfigDir} from "../utils/localConfig";
 import {INewSessionMessage, IResumeSessionMessage} from "../types/ws";
 
 /**
@@ -151,10 +152,15 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
     const args: string[] = buildArgs(message);
     console.log(`WebSocket: Spawning claude ${args.join(' ')}`.cyan);
 
+    const claudeConfigDir: string | undefined = getClaudeConfigDir();
     const claudeProcess: ChildProcess = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: message.projectDir || undefined,
         detached: true,
+        env: {
+            ...process.env,
+            ...(claudeConfigDir ? {CLAUDE_CONFIG_DIR: claudeConfigDir} : {}),
+        },
     });
 
     // Pipe prior conversation context first (edit_session reconstruction), then the new user message
