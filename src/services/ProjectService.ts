@@ -6,6 +6,7 @@ import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
 import {getR2Config} from "../utils/localConfig";
+import SessionLineModel from "../models/SessionLine";
 import {reclaimR2Storage} from "../utils/reclaimR2Storage";
 import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
@@ -93,6 +94,7 @@ class ProjectService {
         console.debug('DEBUG: Starting delete transaction'.cyan, {sessionCount: sessions.length, memoryCount, sessionIds});
         const mongoSession: ClientSession = await mongoose.startSession();
         let deletedMessagesCount: number = 0;
+        let deletedSessionLinesCount: number = 0;
         let deletedTasksCount: number = 0;
         let deletedMemoriesCount: number = 0;
         let deletedSessionsCount: number = 0;
@@ -107,6 +109,10 @@ class ProjectService {
                 {sessionId: {$in: sessionIds}},
                 {session: mongoSession},
             ));
+            ({deletedCount: deletedSessionLinesCount} = await SessionLineModel.deleteMany(
+                {sessionId: {$in: sessionIds}},
+                {session: mongoSession},
+            ));
             ({deletedCount: deletedMemoriesCount} = await MemoryModel.deleteMany(
                 {projectDir},
                 {session: mongoSession},
@@ -117,7 +123,7 @@ class ProjectService {
             ));
 
             await mongoSession.commitTransaction();
-            console.log('Database: Project deleted'.cyan, {projectDir, deletedSessionsCount, deletedMessagesCount, deletedTasksCount, deletedMemoriesCount});
+            console.log('Database: Project deleted'.cyan, {projectDir, deletedSessionsCount, deletedMessagesCount, deletedSessionLinesCount, deletedTasksCount, deletedMemoriesCount});
         } catch (error: unknown) {
             console.error('inside catch of deleteProject:'.red.bold, error);
             await mongoSession.abortTransaction();
@@ -128,7 +134,10 @@ class ProjectService {
 
         // After commit: parallel cleanup — MongoDB fragmentation reclaim + R2 object deletion
         const [, deletedAttachments] = await Promise.all([
-            reclaimR2Storage('messages').catch(() => {}),
+            Promise.all([
+                reclaimR2Storage('messages'),
+                reclaimR2Storage('sessionlines'),
+            ]).catch(() => {}),
             r2UrlsToDelete.length ? deleteAttachmentsByUrls(r2UrlsToDelete).catch(() => 0) : Promise.resolve(0),
         ]);
 

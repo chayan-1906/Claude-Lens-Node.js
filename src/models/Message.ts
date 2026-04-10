@@ -42,6 +42,7 @@ export interface IMessage extends Document {
     messageId: string;                      // derived from _id via toJSON (not stored)
     uuid: string;                           // JSONL envelope uuid — deduplication key for re-sync
     parentUuid?: string;                    // JSONL envelope parentUuid — tree structure for regenerate/edit branches
+    startLineIndex?: number;                // first JSONL line index that produced this message
     sessionInternalId: Types.ObjectId;      // ref: Session
     role: EMessageRole;
     content: string | ContentBlock[];
@@ -73,6 +74,9 @@ const MessageSchema = new Schema<IMessage>({
     },
     parentUuid: {
         type: String,
+    },
+    startLineIndex: {
+        type: Number,
     },
     sessionInternalId: {
         type: Schema.Types.ObjectId,

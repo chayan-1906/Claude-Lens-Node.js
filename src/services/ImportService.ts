@@ -106,7 +106,8 @@ class ImportService {
             let lastTimestamp: Date = new Date(firstLine.timestamp ?? Date.now());
             let lastAssistantMsgId: string | null = null;
 
-            for (const line of lines) {
+            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                const line: string = lines[lineIndex];
                 const parsed: IJsonlLine = JSON.parse(line);
                 if (existingUuids.has(parsed.uuid)) continue;
 
@@ -135,6 +136,7 @@ class ImportService {
                 newMessages.push({
                     uuid: parsed.uuid,
                     parentUuid: parsed.parentUuid ?? undefined,
+                    startLineIndex: lineIndex,
                     sessionInternalId,
                     role,
                     content: parsed.message.content,

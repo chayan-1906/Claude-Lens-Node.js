@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import {EMessageRole} from "../models/Message";
 import {NON_ALPHANUMERIC_REGEX} from "./constants";
-import {IParsedFile, IParsedMessage} from "../types/sync";
+import {IParsedFile, IParsedMessage, IParsedSessionLine} from "../types/sync";
 
 // --- Constants ---
 
@@ -41,6 +41,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
     const lines: string[] = raw.split('\n');
 
     const messages: IParsedMessage[] = [];
+    const sessionLines: IParsedSessionLine[] = [];
     // Track uuid → parentUuid for ALL entries (including non-stored ones like result, system,
     // progress, file-history-snapshot) so we can re-parent stored messages whose parentUuid
     // references a non-stored entry — without this, getActiveBranch's tree walk breaks at
@@ -61,7 +62,8 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
     let lastAssistantMsgId: string | null = null;
 
     for (let i: number = 0; i < lines.length; i++) {
-        const line: string = lines[i].trim();
+        const rawLine: string = lines[i];
+        const line: string = rawLine.trim();
         if (!line) continue;
 
         let parsedLine: Record<string, unknown>;
@@ -100,6 +102,15 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         // Extract custom title from /rename command
         if (lineType === 'custom-title' && parsedLine.customTitle) {
             customTitle = parsedLine.customTitle as string;
+        }
+
+        if (lineType === 'result' || lineType === 'system' || lineType === 'custom-title' || lineType === 'progress' || lineType === 'file-history-snapshot' || lineType === 'queue-operation' || lineType === 'last-prompt') {
+            sessionLines.push({
+                sessionId: (parsedLine.sessionId as string) || sessionId,
+                lineIndex: i,
+                type: lineType,
+                line: rawLine,
+            });
         }
 
         // Skip result events — result.usage is cumulative across all API calls/turns,
@@ -159,7 +170,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
                 (lastMsg.content as Record<string, unknown>[]).push(...(content as Record<string, unknown>[]));
                 // Accumulate raw line into the merged message
                 if (!lastMsg.rawLines) lastMsg.rawLines = [];
-                lastMsg.rawLines.push(lines[i]);
+                lastMsg.rawLines.push(rawLine);
                 // Update uuid + timestamp to latest entry's values.
                 // IMPORTANT: Do NOT update parentUuid — the first entry's parentUuid
                 // points to the previous stored message (e.g. user prompt). Updating it
@@ -189,10 +200,11 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         const parsedMessage: IParsedMessage = {
             uuid: parsedLine.uuid as string,
             parentUuid: parsedLine.parentUuid as string | undefined,
+            startLineIndex: i,
             role: messageRole,
             content,
             timestamp: new Date(parsedLine.timestamp as string),
-            rawLines: [lines[i]],
+            rawLines: [rawLine],
         };
 
         if (messageRole === EMessageRole.ASSISTANT) {
@@ -237,7 +249,12 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         return null;
     }
 
-    console.debug('DEBUG: Parsed JSONL file'.cyan, {file: path.basename(filePath), sessionId, messages: messages.length, title: customTitle || slug || firstUserMessage?.substring(0, 40) || 'Untitled'});
+    console.debug('DEBUG: Parsed JSONL file'.cyan, {
+        file: path.basename(filePath),
+        sessionId,
+        messages: messages.length,
+        title: customTitle || slug || firstUserMessage?.substring(0, 40) || 'Untitled'
+    });
     return {
         sessionId,
         projectDir,
@@ -247,6 +264,7 @@ function parseJsonlFile(filePath: string): IParsedFile | null {
         aiModel,
         title: customTitle || slug || firstUserMessage || 'Untitled session',
         messages,
+        sessionLines,
         contextTokensUsed,
     };
 }

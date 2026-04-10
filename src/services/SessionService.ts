@@ -5,6 +5,7 @@ import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IR2Config} from "../types/setup";
 import {getR2Config} from "../utils/localConfig";
+import SessionLineModel from "../models/SessionLine";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import SessionModel, {ISession} from "../models/Session";
 import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
@@ -193,6 +194,7 @@ class SessionService {
         const mongoSession: ClientSession = await mongoose.startSession();
         let deletedTasksCount: number = 0;
         let deletedMessagesCount: number = 0;
+        let deletedSessionLinesCount: number = 0;
         let deletedSessionCount: number = 0;
         try {
             mongoSession.startTransaction();
@@ -205,13 +207,17 @@ class SessionService {
                 {sessionInternalId: session._id},
                 {session: mongoSession},
             ));
+            ({deletedCount: deletedSessionLinesCount} = await SessionLineModel.deleteMany(
+                {sessionId},
+                {session: mongoSession},
+            ));
             ({deletedCount: deletedSessionCount} = await SessionModel.deleteOne(
                 {sessionId},
                 {session: mongoSession},
             ));
 
             await mongoSession.commitTransaction();
-            console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedTasksCount, deletedMessagesCount});
+            console.log('Database: Session and messages deleted'.cyan, {deletedSessionCount, deletedTasksCount, deletedMessagesCount, deletedSessionLinesCount});
         } catch (error: unknown) {
             await mongoSession.abortTransaction();
             throw error;

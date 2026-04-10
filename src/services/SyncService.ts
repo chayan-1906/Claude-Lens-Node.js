@@ -6,11 +6,12 @@ import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
+import SessionLineModel from "../models/SessionLine";
 import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
 import {CLAUDE_PROJECTS_DIR, CLAUDE_TASKS_DIR, NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import {resolveCanonicalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
-import {ALL_SYNC_TARGETS, IParsedFile, IParsedMessage, ISyncMemoriesResponse, ISyncParams, ISyncResponse, ISyncTasksResponse, RawTask, SyncTarget} from "../types/sync";
+import {ALL_SYNC_TARGETS, IParsedFile, IParsedMessage, IParsedSessionLine, ISyncMemoriesResponse, ISyncParams, ISyncResponse, ISyncTasksResponse, RawTask, SyncTarget} from "../types/sync";
 
 class SyncService {
     /**
@@ -184,9 +185,26 @@ class SyncService {
 
         const sessionInternalId: Types.ObjectId = session._id as Types.ObjectId;
 
+        const sessionLineOps = parsedFile.sessionLines.map((parsedLine: IParsedSessionLine) => ({
+            updateOne: {
+                filter: {sessionId: parsedFile.sessionId, lineIndex: parsedLine.lineIndex},
+                update: {
+                    $set: {
+                        sessionId: parsedFile.sessionId,
+                        type: parsedLine.type,
+                        line: parsedLine.line,
+                    },
+                },
+                upsert: true,
+            },
+        }));
+        if (sessionLineOps.length > 0) {
+            await SessionLineModel.bulkWrite(sessionLineOps, {ordered: false});
+        }
+
         const existingDocs = await MessageModel.find(
             {sessionInternalId},
-            {uuid: 1},
+            {uuid: 1, startLineIndex: 1},
         ).lean();
         const existingUuids: Set<string> = new Set(
             existingDocs.map((document) => document.uuid as string)
@@ -199,6 +217,7 @@ class SyncService {
             .map((parsedMessage: IParsedMessage) => ({
                 uuid: parsedMessage.uuid,
                 parentUuid: parsedMessage.parentUuid,
+                startLineIndex: parsedMessage.startLineIndex,
                 sessionInternalId,
                 role: parsedMessage.role,
                 content: parsedMessage.content,
@@ -218,6 +237,22 @@ class SyncService {
         // rawLines may also be missing for messages direct-written before this feature was added.
         // bulkWrite with updateOne is efficient — only touches messages that need updating.
         if (existingUuids.size > 0) {
+            const startLineIndexBackfillOps = parsedFile.messages
+                .filter((parsedMessage: IParsedMessage) => existingUuids.has(parsedMessage.uuid) && parsedMessage.startLineIndex >= 0)
+                .map((parsedMessage: IParsedMessage) => ({
+                    updateOne: {
+                        filter: {uuid: parsedMessage.uuid, $or: [{startLineIndex: {$exists: false}}, {startLineIndex: null}]},
+                        update: {$set: {startLineIndex: parsedMessage.startLineIndex}},
+                    },
+                }));
+
+            if (startLineIndexBackfillOps.length > 0) {
+                const startLineIndexResult = await MessageModel.bulkWrite(startLineIndexBackfillOps);
+                if (startLineIndexResult.modifiedCount > 0) {
+                    console.log(`SyncService: [backfill] Backfilled startLineIndex for ${startLineIndexResult.modifiedCount} messages (session: ${parsedFile.sessionId})`.cyan);
+                }
+            }
+
             const backfillOps = parsedFile.messages
                 .filter((parsedMessage: IParsedMessage) =>
                     existingUuids.has(parsedMessage.uuid) && parsedMessage.parentUuid,
