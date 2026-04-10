@@ -12,10 +12,12 @@ import MemoryModel from "../models/Memory";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
+import {TRAILING_SLASHES_REGEX} from "../utils/constants";
+import SessionLineModel, {ISessionLine} from "../models/SessionLine";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
-import {TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
+import {buildLosslessMongoJsonlLines, canBuildLosslessMongoJsonl} from "../utils/sessionJsonl";
 import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
 import {resolveCanonicalPath, resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {
@@ -337,12 +339,11 @@ function reconstructAndSaveJsonl(session: ISession, messages: IMessage[], localP
 }
 
 /**
- * Restore a Claude session JSONL file from raw lines stored in MongoDB.
- * Concatenates rawLines from all messages in timestamp order and writes to disk.
+ * Restore a Claude session JSONL file from raw lines + SessionLine records stored in MongoDB.
  * This is a lossless restoration — the original JSONL bytes are preserved exactly,
  * unlike reconstructAndSaveJsonl() which reverse-engineers the format from structured data.
  */
-function rawLineRestoreJsonl(session: ISession, messages: IMessage[], localProjectDirHash?: string): void {
+function rawLineRestoreJsonl(session: ISession, messages: IMessage[], sessionLines: ISessionLine[], localProjectDirHash?: string): void {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
     const effectiveHash: string = localProjectDirHash ?? session.projectDir;
     const sessionDir: string = path.join(claudeProjectsDir, effectiveHash);
@@ -350,20 +351,10 @@ function rawLineRestoreJsonl(session: ISession, messages: IMessage[], localProje
 
     fs.mkdirSync(sessionDir, {recursive: true});
 
-    // Sort by timestamp ascending — preserves original JSONL line order
-    const sorted: IMessage[] = [...messages].sort((a: IMessage, b: IMessage) =>
-        new Date(a.timestamp as Date).getTime() - new Date(b.timestamp as Date).getTime(),
-    );
-
-    const allLines: string[] = [];
-    for (const message of sorted) {
-        if (message.rawLines && message.rawLines.length > 0) {
-            allLines.push(...message.rawLines);
-        }
-    }
+    const allLines: string[] = buildLosslessMongoJsonlLines(messages, sessionLines);
 
     fs.writeFileSync(jsonlPath, allLines.join('\n') + '\n', 'utf-8');
-    console.log(`WebSocket: [RAW-RESTORE] Lossless JSONL restored at ${jsonlPath} (${allLines.length} lines from ${messages.length} messages)`.green);
+    console.log(`WebSocket: [RAW-RESTORE] Lossless JSONL restored at ${jsonlPath} (${allLines.length} lines from ${messages.length} messages + ${sessionLines.length} session lines)`.green);
 }
 
 /**
@@ -1068,6 +1059,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                     sendError(webSocket, `Cannot resume: session ${clientMessage.sessionId} has no messages in MongoDB and local files are missing.`);
                                     break;
                                 }
+                                const sessionLines: ISessionLine[] = await SessionLineModel.find(
+                                    {sessionId: clientMessage.sessionId},
+                                    null,
+                                    {sort: {lineIndex: 1}},
+                                );
                                 console.log(`WebSocket: [TRACE] Messages from MongoDB (${messages.length}):`);
                                 messages.forEach((message: IMessage, index: number) => {
                                     const contentSummary: string = Array.isArray(message.content)
@@ -1076,16 +1072,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                     console.log(`WebSocket: [TRACE]   [${index}] role=${message.role} uuid=${message.uuid} rawLines=${message.rawLines?.length ?? 0} content=${contentSummary}`.cyan);
                                 });
                                 try {
-                                    // Prefer lossless raw-line restore when all messages have rawLines.
-                                    // Fall back to lossy reconstruction for legacy sessions that pre-date
-                                    // the rawLines feature (until the backfill migration has run).
-                                    const allHaveRawLines: boolean = messages.every((message: IMessage) => message.rawLines && message.rawLines.length > 0);
-                                    if (allHaveRawLines) {
-                                        console.log('WebSocket: [TRACE] All messages have rawLines — using lossless restore'.green);
-                                        rawLineRestoreJsonl(session, messages, localProjectDirHash);
+                                    if (canBuildLosslessMongoJsonl(messages, sessionLines)) {
+                                        console.log('WebSocket: [TRACE] Messages + SessionLine records available — using lossless restore'.green);
+                                        rawLineRestoreJsonl(session, messages, sessionLines, localProjectDirHash);
                                     } else {
                                         const missingCount: number = messages.filter((message: IMessage) => !message.rawLines || message.rawLines.length === 0).length;
-                                        console.warn(`WebSocket: [TRACE] ${missingCount}/${messages.length} messages missing rawLines — falling back to reconstruction`.yellow);
+                                        console.warn(`WebSocket: [TRACE] Lossless Mongo restore unavailable (missingRawLines=${missingCount}, sessionLines=${sessionLines.length}) — falling back to reconstruction`.yellow);
                                         reconstructAndSaveJsonl(session, messages, localProjectDirHash, localRawProjectDir);
                                     }
                                 } catch (reconstructionError: unknown) {

@@ -109,6 +109,8 @@ class ImportService {
             for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
                 const line: string = lines[lineIndex];
                 const parsed: IJsonlLine = JSON.parse(line);
+                if (parsed.type !== 'user' && parsed.type !== 'assistant') continue;
+                if (!parsed.message || (parsed.message.role !== 'user' && parsed.message.role !== 'assistant')) continue;
                 if (existingUuids.has(parsed.uuid)) continue;
 
                 const role: string = parsed.message.role;

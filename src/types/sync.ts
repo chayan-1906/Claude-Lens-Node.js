@@ -22,6 +22,13 @@ export interface IParsedMessage {
     rawLines?: string[];   // original JSONL line(s) — lossless restore on resume
 }
 
+export interface IJsonlEntry {
+    lineIndex: number;
+    timestamp: number;
+    order: number;
+    lines: string[];
+}
+
 export interface IParsedSessionLine {
     sessionId: string;
     lineIndex: number;

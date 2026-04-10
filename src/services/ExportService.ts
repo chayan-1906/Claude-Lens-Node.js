@@ -8,109 +8,33 @@ import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import MessageModel, {IMessage} from "../models/Message";
 import SessionModel, {ISession} from "../models/Session";
 import {downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
+import SessionLineModel, {ISessionLine} from "../models/SessionLine";
+import {buildLosslessMongoJsonlLines, canBuildLosslessMongoJsonl} from "../utils/sessionJsonl";
 import {IExportManifest, IExportResult, IExportServiceParams, IManifestSessionEntry} from "../types/export";
 
 /** Marker path segment used to extract relative memory file paths */
 const MEMORY_PATH_MARKER: string = '/memory/';
 
-/**
- * Parse raw JSONL content and build a UUID → rawLines map.
- * Replicates the merge logic from parseJsonlFile: consecutive assistant entries
- * with the same message.id are grouped under the last entry's UUID, matching
- * how SyncService stores merged messages in MongoDB.
- */
-function buildRawLinesMap(jsonlContent: string): Map<string, string[]> {
-    const lines: string[] = jsonlContent.split('\n');
-    const result: Map<string, string[]> = new Map();
-    let lastAssistantMsgId: string | null = null;
-    let lastMergedUuid: string | null = null;
-
-    for (const line of lines) {
-        const trimmed: string = line.trim();
-        if (!trimmed) continue;
-
-        let parsed: Record<string, unknown>;
-        try {
-            parsed = JSON.parse(trimmed);
-        } catch {
-            continue;
-        }
-
-        const lineType: string = parsed.type as string;
-        if (lineType !== 'user' && lineType !== 'assistant') continue;
-
-        const message: Record<string, unknown> | undefined = parsed.message as Record<string, unknown> | undefined;
-        if (!message) continue;
-
-        const role: string = message.role as string;
-        if (role !== 'user' && role !== 'assistant') continue;
-
-        const uuid: string = parsed.uuid as string;
-        const msgId: string | undefined = message.id as string | undefined;
-
-        // Merge consecutive assistant entries with same message.id (mirrors parseJsonlFile)
-        if (role === 'assistant' && msgId && msgId === lastAssistantMsgId && lastMergedUuid) {
-            const existing: string[] | undefined = result.get(lastMergedUuid);
-            if (existing) {
-                existing.push(line);
-                // Re-key from old UUID to new UUID (last entry wins)
-                result.delete(lastMergedUuid);
-                result.set(uuid, existing);
-                lastMergedUuid = uuid;
-                continue;
-            }
-        }
-
-        result.set(uuid, [line]);
-
-        if (role === 'assistant') {
-            lastAssistantMsgId = msgId ?? null;
-            lastMergedUuid = uuid;
-        } else {
-            lastAssistantMsgId = null;
-            lastMergedUuid = null;
-        }
+async function loadBestJsonlContent(session: ISession): Promise<string | null> {
+    // Priority 1: R2 JSONL backup
+    const r2Content: string | null = await downloadJsonlBackup(session.sessionId);
+    if (r2Content) {
+        console.log(`Export: Using R2 JSONL backup for session ${session.sessionId}`.cyan);
+        return r2Content;
     }
 
-    return result;
-}
-
-/**
- * Build a fallback rawLines map for messages that lack rawLines in MongoDB.
- *
- * JSONL source priority chain (most → least faithful):
- *   1. rawLines from MongoDB  — handled inline in exportProject, not here
- *   2. On-disk JSONL file     — ~/.claude/projects/{projectDir}/{sessionId}.jsonl
- *   3. R2 JSONL backup        — cloud backup from a previous sync/export
- *   4. Reconstruction         — last resort, lossy (parallel tool_use blocks lost)
- */
-async function buildFallbackRawLinesMap(session: ISession): Promise<Map<string, string[]>> {
     // Priority 2: on-disk JSONL
     const jsonlPath: string = path.join(CLAUDE_PROJECTS_DIR, session.projectDir, `${session.sessionId}.jsonl`);
     if (fs.existsSync(jsonlPath)) {
         try {
             const content: string = fs.readFileSync(jsonlPath, 'utf-8');
-            const map: Map<string, string[]> = buildRawLinesMap(content);
-            if (map.size > 0) {
-                console.log(`Export: Loaded ${map.size} message(s) from on-disk JSONL`.cyan);
-                return map;
-            }
+            console.log(`Export: Using on-disk JSONL for session ${session.sessionId}`.cyan);
+            return content;
         } catch (err: unknown) {
             console.warn(`Export: Failed to read on-disk JSONL — ${err}`.yellow);
         }
     }
-
-    // Priority 3: R2 JSONL backup
-    const r2Content: string | null = await downloadJsonlBackup(session.sessionId);
-    if (r2Content) {
-        const map: Map<string, string[]> = buildRawLinesMap(r2Content);
-        if (map.size > 0) {
-            console.log(`Export: Loaded ${map.size} message(s) from R2 backup`.cyan);
-            return map;
-        }
-    }
-
-    return new Map();
+    return null;
 }
 
 class ExportService {
@@ -139,35 +63,22 @@ class ExportService {
                 null,
                 {sort: {timestamp: 1}},
             );
+            const sessionLines: ISessionLine[] = await SessionLineModel.find(
+                {sessionId: session.sessionId},
+                null,
+                {sort: {lineIndex: 1}},
+            );
 
-            // Build fallback map only if any message lacks rawLines.
-            // This avoids unnecessary disk/R2 reads when all messages have rawLines.
-            const needsFallback: boolean = messages.some((m: IMessage) => !m.rawLines || m.rawLines.length === 0);
-            const fallbackMap: Map<string, string[]> = needsFallback
-                ? await buildFallbackRawLinesMap(session)
-                : new Map();
+            let jsonlContent: string | null = await loadBestJsonlContent(session);
 
-            /*
-             * JSONL source priority chain (per message):
-             *   1. rawLines from MongoDB  — lossless original JSONL lines stored during sync
-             *   2. On-disk / R2 fallback  — parsed via buildRawLinesMap with merge logic
-             *   3. Reconstruction         — last resort, LOSSY: parallel tool_use blocks
-             *                               from merged assistant messages may be lost,
-             *                               causing "tool use concurrency" 400 errors
-             *                               when Claude Code resumes the session
-             */
-            const jsonlLines: string[] = messages.flatMap((message: IMessage) => {
-                // Priority 1: rawLines from MongoDB
-                if (message.rawLines && message.rawLines.length > 0) {
-                    return message.rawLines;
-                }
-                // Priority 2/3: rawLines from on-disk JSONL or R2 backup
-                const fallbackLines: string[] | undefined = fallbackMap.get(message.uuid);
-                if (fallbackLines && fallbackLines.length > 0) {
-                    return fallbackLines;
-                }
-                // Priority 4: reconstruct from structured data (lossy)
-                return [JSON.stringify({
+            if (!jsonlContent && canBuildLosslessMongoJsonl(messages, sessionLines)) {
+                const jsonlLines: string[] = buildLosslessMongoJsonlLines(messages, sessionLines);
+                jsonlContent = jsonlLines.join('\n');
+                console.log(`Export: Built lossless MongoDB JSONL for session ${session.sessionId}`.cyan);
+            }
+
+            if (!jsonlContent) {
+                const jsonlLines: string[] = messages.flatMap((message: IMessage) => [JSON.stringify({
                     type: message.role === 'user' ? 'user' : 'assistant',
                     parentUuid: message.parentUuid ?? null,
                     isSidechain: false,
@@ -180,11 +91,12 @@ class ExportService {
                     userType: 'external',
                     version: 1,
                     ...(message.tokenUsage && {tokenUsage: message.tokenUsage}),
-                })];
-            });
+                })]);
+                jsonlContent = jsonlLines.join('\n');
+                console.warn(`Export: Falling back to lossy reconstruction for session ${session.sessionId}`.yellow);
+            }
 
-            console.debug('DEBUG: Session JSONL built'.cyan, {sessionId: session.sessionId, messages: messages.length});
-            const jsonlContent: string = jsonlLines.join('\n');
+            console.debug('DEBUG: Session JSONL built'.cyan, {sessionId: session.sessionId, messages: messages.length, sessionLines: sessionLines.length});
             archive.append(jsonlContent, {name: `projects/${session.sessionId}.jsonl`});
 
             // Best-effort R2 backup on export (fire-and-forget)
