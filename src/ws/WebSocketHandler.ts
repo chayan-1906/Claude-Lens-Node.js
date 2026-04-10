@@ -958,7 +958,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
          *  so it can refetch the session with the full data (including the
          *  human-typed user message that only exists in the JSONL file). */
         const autoSyncWebUI = async (): Promise<void> => {
-            await autoSync();
+            await autoSync(activeProjectDir);
             if (activeSessionId) {
                 try {
                     await SessionModel.updateOne(
@@ -1635,13 +1635,15 @@ function sendError(webSocket: WebSocket, message: string): void {
 }
 
 /**
- * Trigger a full sync after each completed turn (result event).
+ * Trigger a scoped sync after each completed turn (result event).
+ * When rawProjectDir is provided, only the active project is synced (sessions,
+ * tasks, memories). Falls back to full sync if rawProjectDir is unknown.
  * Runs in the background — does not block the WebSocket connection.
  */
-async function autoSync(): Promise<void> {
+async function autoSync(rawProjectDir: string | null): Promise<void> {
     try {
         console.log('WebSocket: Auto-syncing conversation to MongoDB...'.cyan);
-        const result = await SyncService.sync({});
+        const result = await SyncService.sync(rawProjectDir ? {projectDirs: [rawProjectDir]} : {});
         console.log('WebSocket: Auto-sync complete'.green, result);
     } catch (error: unknown) {
         console.error(`WebSocket: Auto-sync failed — ${error}`.red);
