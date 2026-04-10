@@ -693,6 +693,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             }, 5 * 60 * 1000);
         }
 
+        const triggerResultEventBackup = (): void => {
+            if (activeSessionId) {
+                backupSessionJsonl(activeSessionId, 'result_event').catch(() => {});
+            }
+        }
+
         /** Register session → WS mapping when system event provides the session_id.
          *  Also triggers direct-write session upsert so messages can be saved immediately. */
         const onSystemEvent = (event: Record<string, unknown>): void => {
@@ -1180,6 +1186,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         // Also persist AFTER sync for new sessions (sync creates the session first).
                         // Both calls are safe: zero-guard skips rejected results, $set is idempotent.
                         persistResultContext(resultEvent);
+                        triggerResultEventBackup();
 
                         // Trigger #3: size threshold backup (every 5MB boundary crossed)
                         if (activeSessionId && activeProjectDir) {
@@ -1325,6 +1332,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     console.log(`WebSocket: edit_session — spawning fresh session (cwd: ${spawnMsg.projectDir}, contextUserCount: ${contextUserCount})`.cyan);
                     claudeProcess = spawnClaude(spawnMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
+                        triggerResultEventBackup();
 
                         // Trigger #3: size threshold backup (every 5MB boundary crossed)
                         if (activeSessionId && activeProjectDir) {
@@ -1465,6 +1473,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                     claudeProcess = spawnClaude(resumeMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
+                        triggerResultEventBackup();
 
                         // Trigger #3: size threshold backup (every 5MB boundary crossed)
                         if (activeSessionId && activeProjectDir) {
