@@ -3,11 +3,9 @@ import {Readable} from "stream";
 import Groq, {toFile} from "groq-sdk";
 import {MsEdgeTTS, OUTPUT_FORMAT} from "msedge-tts";
 import {Transcription} from "groq-sdk/resources/audio";
-import {GROQ_API_KEY} from "../config/config";
+import {getGroqConfig} from "../utils/localConfig";
 import {ITranscribeServiceResponse} from "../types/voice";
 import {generateInvalidCode, generateMissingCode} from "../utils/generateErrorCodes";
-
-const groq: Groq = new Groq({apiKey: GROQ_API_KEY});
 
 const WHISPER_PRIMARY: string = 'whisper-large-v3-turbo';
 const WHISPER_FALLBACK: string = 'whisper-large-v3';
@@ -19,7 +17,7 @@ const MIN_AUDIO_BUFFER_SIZE: number = 1500;
 
 class VoiceService {
     /** Attempt Whisper transcription with automatic fallback */
-    private static async whisperTranscribe(file: File): Promise<{transcription: Transcription; model: string}> {
+    private static async whisperTranscribe(groq: Groq, file: File): Promise<{transcription: Transcription; model: string}> {
         try {
             console.log(`Service: Trying primary model (${WHISPER_PRIMARY})...`.cyan);
             const transcription: Transcription = await groq.audio.transcriptions.create({
@@ -53,11 +51,19 @@ class VoiceService {
             return {error: generateInvalidCode('audio')};
         }
 
+        // Lazy init — read Groq config from disk on every call
+        const groqConfig = getGroqConfig();
+        if (!groqConfig) {
+            console.warn('Service: Groq API key not configured'.yellow.bold);
+            return {error: generateMissingCode('groqConfig')};
+        }
+        const groq: Groq = new Groq({apiKey: groqConfig.apiKey});
+
         // Step 1 — Groq Whisper: audio buffer → raw transcript
         const file: File = await toFile(buffer, originalname);
         console.log('Service: File prepared for upload'.cyan, {fileName: file.name, fileSize: file.size});
 
-        const {transcription, model} = await VoiceService.whisperTranscribe(file);
+        const {transcription, model} = await VoiceService.whisperTranscribe(groq, file);
 
         const transcript: string = transcription.text;
         console.log(`Service: Whisper transcription complete (${model})`.cyan, {transcript});

@@ -13,7 +13,7 @@ dotenv.config({
 });
 
 /** Centralized app configuration from environment variables */
-export const {NODE_ENV, PORT, APP_VERSION, GROQ_API_KEY} = process.env;
+export const {NODE_ENV, PORT, APP_VERSION} = process.env;
 
 /** Validate required env vars at startup — fail fast with clear error */
 const REQUIRED_ENV_VARS: string[] = ['PORT'];

@@ -2,6 +2,7 @@ import "colors";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import Groq from "groq-sdk";
 import mongoose from "mongoose";
 import {randomUUID} from "crypto";
 import {Request, Response} from "express";
@@ -13,7 +14,7 @@ import {ApiResponse} from "../utils/ApiResponse";
 import {toProjectDirHash} from "../utils/resolveProjectDir";
 import {R2_ENDPOINT_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {clearClaudeConfigDir, generateRandomColor, getLocalConfig, getR2Config, saveClaudeConfigDir, saveLocalConfig, saveR2Config} from "../utils/localConfig";
+import {clearClaudeConfigDir, generateRandomColor, getGroqConfig, getLocalConfig, getR2Config, saveClaudeConfigDir, saveGroqConfig, saveLocalConfig, saveR2Config} from "../utils/localConfig";
 import type {
     IAddConfigurationBody,
     IAddPathMappingBody,
@@ -21,12 +22,14 @@ import type {
     IConfigIdParams,
     IEditConfigurationBody,
     IEditPathMappingBody,
+    IGroqConfig,
     ILocalConfig,
     IMappingIdParams,
     IMongoConfiguration,
     IPathMapping,
     IR2Config,
     ISaveClaudeAccountBody,
+    ISaveGroqConfigBody,
     ISaveR2ConfigBody,
 } from "../types/setup";
 
@@ -42,15 +45,18 @@ const getSetupStatusController = async (req: Request, res: Response) => {
         const dbConnected: boolean = mongoose.connection.readyState === 1;
         const r2Config: IR2Config | null = getR2Config();
         const r2Configured: boolean = r2Config !== null;
-        console.debug('DEBUG: DB readyState'.cyan, {readyState: mongoose.connection.readyState, dbConnected, hasLocalConfig: localConfig !== null, r2Configured});
+        const groqConfig: IGroqConfig | null = getGroqConfig();
+        const groqConfigured: boolean = groqConfig !== null;
+        console.debug('DEBUG: DB readyState'.cyan, {readyState: mongoose.connection.readyState, dbConnected, hasLocalConfig: localConfig !== null, r2Configured, groqConfigured});
 
-        console.log('SUCCESS: Status fetched'.bgGreen.bold, {configured: dbConnected, hasLocalConfig: localConfig !== null, r2Configured});
+        console.log('SUCCESS: Status fetched'.bgGreen.bold, {configured: dbConnected, hasLocalConfig: localConfig !== null, r2Configured, groqConfigured});
         res.status(200).send(new ApiResponse({
             success: true,
             message: 'Status fetched!',
             configured: dbConnected,
             hasLocalConfig: localConfig !== null,
             r2Configured,
+            groqConfigured,
         }));
     } catch (error: any) {
         console.error('Controller Error: getSetupStatusController failed'.red.bold, error);
@@ -1162,6 +1168,96 @@ const saveClaudeAccountController = async (req: Request, res: Response) => {
     }
 }
 
+/**
+ * GET /api/v1/setup/groq-config
+ * Returns saved Groq credentials
+ */
+const getGroqConfigController = async (req: Request, res: Response) => {
+    console.info('Controller: getGroqConfigController started'.bgBlue.white.bold);
+
+    try {
+        const groqConfig: IGroqConfig | null = getGroqConfig();
+
+        if (!groqConfig) {
+            console.log('SUCCESS: Groq config not configured'.bgGreen.bold);
+            res.status(200).send(new ApiResponse({
+                success: true,
+                message: 'Groq config not configured yet!',
+                groqConfig: null,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: Groq config fetched'.bgGreen.bold);
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Groq config fetched!',
+            groqConfig,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: getGroqConfigController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while fetching Groq config!',
+        }));
+    }
+}
+
+/**
+ * POST /api/v1/setup/groq-config
+ * Validates apiKey against Groq API, saves to config.json
+ */
+const saveGroqConfigController = async (req: Request, res: Response) => {
+    console.info('Controller: saveGroqConfigController started'.bgBlue.white.bold);
+
+    try {
+        const {apiKey}: ISaveGroqConfigBody = req.body;
+
+        if (!apiKey) {
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateMissingCode('apiKey'),
+                errorMsg: 'apiKey is required!',
+            }));
+            return;
+        }
+
+        // Validate key against Groq API — lightweight models.list() call
+        try {
+            const groq: Groq = new Groq({apiKey});
+            await groq.models.list();
+        } catch (validationError: any) {
+            const isAuthError: boolean = validationError?.status === 401 || validationError?.status === 403;
+            res.status(400).send(new ApiResponse({
+                success: false,
+                errorCode: generateInvalidCode('apiKey'),
+                errorMsg: isAuthError
+                    ? 'apiKey is invalid — Groq rejected the key. Please check and try again.'
+                    : 'Could not validate key against Groq — check the key and your network connection.',
+            }));
+            return;
+        }
+
+        const groqConfig: IGroqConfig = {apiKey};
+
+        // Save to ~/.claude-lens/config.json
+        saveGroqConfig(groqConfig);
+
+        console.log('SUCCESS: Groq config saved'.bgGreen.bold);
+        res.status(200).send(new ApiResponse({
+            success: true,
+            message: 'Groq config saved!',
+            groqConfig,
+        }));
+    } catch (error: any) {
+        console.error('Controller Error: saveGroqConfigController failed'.red.bold, error);
+        res.status(500).send(new ApiResponse({
+            success: false,
+            errorMsg: error.message || 'Something went wrong while saving Groq config!',
+        }));
+    }
+}
+
 export {
     getSetupStatusController,
     getConfigurationsController,
@@ -1178,6 +1274,8 @@ export {
     mergePathMappingController,
     getR2ConfigController,
     saveR2ConfigController,
+    getGroqConfigController,
+    saveGroqConfigController,
     getAccountsController,
     getClaudeAccountController,
     saveClaudeAccountController,

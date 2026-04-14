@@ -17,6 +17,11 @@ export interface IR2Config {
     bucketName: string;
 }
 
+/** Groq API credentials for Speech-to-Text */
+export interface IGroqConfig {
+    apiKey: string;
+}
+
 /** A single path mapping — maps multiple absolute paths to one canonical path */
 export interface IPathMapping {
     id: string;              // UUID — unique key
@@ -39,6 +44,7 @@ export interface ILocalConfig {
     activeConfigId: string;
     pathMappings: IPathMapping[];
     r2Config?: IR2Config;
+    groqConfig?: IGroqConfig;
     ttsVoiceId?: string;
     ttsRate?: number;
     claudeConfigDir?: string;
@@ -96,4 +102,9 @@ export interface ISaveR2ConfigBody {
 /** POST /api/v1/setup/claude-account — request body */
 export interface ISaveClaudeAccountBody {
     claudeConfigDir?: string;
+}
+
+/** POST /api/v1/setup/groq-config — request body */
+export interface ISaveGroqConfigBody {
+    apiKey?: string;
 }

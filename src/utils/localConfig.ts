@@ -1,7 +1,7 @@
 import "colors";
 import fs from "fs";
 import path from "path";
-import {ILocalConfig, IR2Config} from "../types/setup";
+import {IGroqConfig, ILocalConfig, IR2Config} from "../types/setup";
 
 // --- Constants ---
 
@@ -76,10 +76,36 @@ function saveR2Config(config: IR2Config): void {
 }
 
 /**
+ * Read the groqConfig section from ~/.claude-lens/config.json
+ * Returns the Groq config, or null if not configured
+ */
+function getGroqConfig(): IGroqConfig | null {
+    const localConfig: ILocalConfig | null = getLocalConfig();
+    if (!localConfig?.groqConfig) {
+        console.debug('DEBUG: Groq config not found in local config'.cyan);
+        return null;
+    }
+
+    console.debug('DEBUG: Groq config loaded'.cyan);
+    return localConfig.groqConfig;
+}
+
+/**
+ * Write groqConfig into ~/.claude-lens/config.json
+ * Preserves all other config keys
+ */
+function saveGroqConfig(config: IGroqConfig): void {
+    const localConfig: ILocalConfig = getLocalConfig() ?? {configurations: [], activeConfigId: '', pathMappings: []};
+    localConfig.groqConfig = config;
+    saveLocalConfig(localConfig);
+    console.debug('DEBUG: Groq config saved'.cyan);
+}
+
+/**
  * Read ttsVoiceId and ttsRate from ~/.claude-lens/config.json
  * Returns the stored values, or the defaults if not set.
  */
-function getTtsSettings(): {voiceId: string; rate: number} {
+function getTtsSettings(): { voiceId: string; rate: number } {
     const localConfig: ILocalConfig | null = getLocalConfig();
     return {
         voiceId: localConfig?.ttsVoiceId ?? 'en-US-AriaNeural',
@@ -91,7 +117,7 @@ function getTtsSettings(): {voiceId: string; rate: number} {
  * Write ttsVoiceId and/or ttsRate into ~/.claude-lens/config.json
  * Only updates the supplied fields — preserves all other config keys.
  */
-function saveTtsSettings({voiceId, rate}: {voiceId?: string; rate?: number}): void {
+function saveTtsSettings({voiceId, rate}: { voiceId?: string; rate?: number }): void {
     const localConfig: ILocalConfig = getLocalConfig() ?? {configurations: [], activeConfigId: '', pathMappings: []};
     if (voiceId !== undefined) localConfig.ttsVoiceId = voiceId;
     if (rate !== undefined) localConfig.ttsRate = rate;
@@ -130,4 +156,17 @@ function clearClaudeConfigDir(): void {
     console.debug('DEBUG: claudeConfigDir cleared'.cyan);
 }
 
-export {getLocalConfig, saveLocalConfig, generateRandomColor, getR2Config, saveR2Config, getTtsSettings, saveTtsSettings, getClaudeConfigDir, saveClaudeConfigDir, clearClaudeConfigDir};
+export {
+    getLocalConfig,
+    saveLocalConfig,
+    generateRandomColor,
+    getR2Config,
+    saveR2Config,
+    getGroqConfig,
+    saveGroqConfig,
+    getTtsSettings,
+    saveTtsSettings,
+    getClaudeConfigDir,
+    saveClaudeConfigDir,
+    clearClaudeConfigDir,
+};

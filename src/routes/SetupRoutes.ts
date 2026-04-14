@@ -11,10 +11,12 @@ import {
     getConfigProjectsController,
     getConfigurationsController,
     getPathMappingsController,
+    getGroqConfigController,
     getR2ConfigController,
     getSetupStatusController,
     mergePathMappingController,
     saveClaudeAccountController,
+    saveGroqConfigController,
     saveR2ConfigController,
     testConfigurationController,
     updatePathMappingController,
@@ -36,6 +38,10 @@ router.get('/configurations/:configId/projects', getConfigProjectsController);
 // R2 config routes
 router.get('/r2-config', getR2ConfigController);
 router.post('/r2-config', saveR2ConfigController);
+
+// Groq config routes
+router.get('/groq-config', getGroqConfigController);
+router.post('/groq-config', saveGroqConfigController);
 
 // Path mapping CRUD + merge routes
 router.get('/path-mappings', getPathMappingsController);
