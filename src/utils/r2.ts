@@ -48,10 +48,12 @@ function getR2Client(): S3Client | null {
 async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<string> {
     const config: IR2Config | null = getR2Config();
     if (!config) throw new Error('R2 is not configured — cannot upload attachment');
+    const client: S3Client | null = getR2Client();
+    if (!client) throw new Error('R2 client not initialized — cannot upload attachment');
     const key: string = `${sessionId}/${Date.now()}-${attachment.name}`;
     const buffer: Buffer = Buffer.from(attachment.data, 'base64');
 
-    await getR2Client()!.send(new PutObjectCommand({
+    await client.send(new PutObjectCommand({
         Bucket: config.bucketName,
         Key: key,
         Body: buffer,
@@ -70,7 +72,9 @@ async function uploadToR2(attachment: IAttachment, sessionId: string): Promise<s
 async function deleteSessionAttachments(sessionId: string): Promise<number> {
     const config: IR2Config | null = getR2Config();
     if (!config) return 0;
-    const listed = await getR2Client()!.send(new ListObjectsV2Command({
+    const client: S3Client | null = getR2Client();
+    if (!client) return 0;
+    const listed = await client.send(new ListObjectsV2Command({
         Bucket: config.bucketName,
         Prefix: `${sessionId}/`,
     }));
@@ -79,7 +83,7 @@ async function deleteSessionAttachments(sessionId: string): Promise<number> {
         return 0;
     }
 
-    await getR2Client()!.send(new DeleteObjectsCommand({
+    await client.send(new DeleteObjectsCommand({
         Bucket: config.bucketName,
         Delete: {
             Objects: listed.Contents.map((object: _Object) => ({Key: object.Key!})),
@@ -102,6 +106,8 @@ async function deleteAttachmentsByUrls(urls: string[]): Promise<number> {
     if (!urls.length) return 0;
     const config: IR2Config | null = getR2Config();
     if (!config) return 0;
+    const client: S3Client | null = getR2Client();
+    if (!client) return 0;
 
     const prefix: string = config.publicUrl + '/';
     const keys: { Key: string }[] = urls
@@ -114,7 +120,7 @@ async function deleteAttachmentsByUrls(urls: string[]): Promise<number> {
     const promises: Promise<unknown>[] = [];
     for (let index: number = 0; index < keys.length; index += CHUNK_SIZE) {
         const chunk: { Key: string }[] = keys.slice(index, index + CHUNK_SIZE);
-        promises.push(getR2Client()!.send(new DeleteObjectsCommand({
+        promises.push(client.send(new DeleteObjectsCommand({
             Bucket: config.bucketName,
             Delete: {Objects: chunk},
         })));
@@ -199,9 +205,11 @@ function isR2Configured(): boolean {
 async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffer): Promise<string | null> {
     const config: IR2Config | null = getR2Config();
     if (!config) return null;
+    const client: S3Client | null = getR2Client();
+    if (!client) return null;
     try {
         const key: string = `${sessionId}/${sessionId}.jsonl`;
-        await getR2Client()!.send(new PutObjectCommand({
+        await client.send(new PutObjectCommand({
             Bucket: config.bucketName,
             Key: key,
             Body: jsonlContent,
@@ -223,9 +231,11 @@ async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffe
 async function downloadJsonlBackup(sessionId: string): Promise<string | null> {
     const config: IR2Config | null = getR2Config();
     if (!config) return null;
+    const client: S3Client | null = getR2Client();
+    if (!client) return null;
     try {
         const key: string = `${sessionId}/${sessionId}.jsonl`;
-        const resp = await getR2Client()!.send(new GetObjectCommand({
+        const resp = await client.send(new GetObjectCommand({
             Bucket: config.bucketName,
             Key: key,
         }));
