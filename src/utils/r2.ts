@@ -169,9 +169,9 @@ async function buildContentBlocks(attachments: IAttachment[], sessionId: string,
         attachmentMeta.push({name: effectiveAttachment.name, mimeType: effectiveAttachment.mimeType, size: effectiveAttachment.size, r2Url: url});
 
         if (effectiveAttachment.mimeType.startsWith('image/')) {
-            blocks.push({type: 'image', source: {type: 'url', url}});
+            blocks.push({type: 'image', source: {type: 'base64', media_type: effectiveAttachment.mimeType, data: effectiveAttachment.data}});
         } else if (effectiveAttachment.mimeType === 'application/pdf') {
-            blocks.push({type: 'document', source: {type: 'url', url}});
+            blocks.push({type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: effectiveAttachment.data}});
         } else {
             // Text/code files: send URL reference — Claude uses WebFetch to read content
             blocks.push({type: 'text', text: `File attached: ${effectiveAttachment.name} — ${url}`});
