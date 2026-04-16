@@ -107,25 +107,54 @@ function repairOrphanedToolUse(projectDirHash: string, sessionId: string): void 
         let trimCount: number = 0;
 
         // Walk backwards: remove trailing incomplete-turn entries so the session ends cleanly.
-        // Two patterns are handled, and they can alternate (the loop removes both until stable):
+        // Three patterns are handled, and they can alternate (the loop removes all until stable):
         //
-        //   A) Trailing assistant entry that ends with tool_use blocks but has no following
+        //   A) Trailing metadata entries (last-prompt, queue-operation) — these are bookkeeping
+        //      lines written after the last real conversation entry. They are safe to skip so
+        //      the repair can reach the actual conversation entries beneath them. A last-prompt
+        //      entry is commonly written AFTER an interrupted streaming response, which would
+        //      otherwise cause the backward walk to stop prematurely.
+        //
+        //   B) Trailing assistant entry whose message.stop_reason is null — these are raw
+        //      NDJSON-format chunks captured mid-stream before the response was finalized.
+        //      They use snake_case session_id, lack parentUuid/cwd/sessionId, and are
+        //      structurally different from normal JSONL entries. The Claude CLI rejects the
+        //      entire session with "No conversation found" when these are present.
+        //
+        //   C) Trailing assistant entry that ends with tool_use blocks but has no following
         //      user entry with tool_result — the tool was never executed.
         //
-        //   B) Trailing user entry that contains ONLY tool_result blocks but has no following
+        //   D) Trailing user entry that contains ONLY tool_result blocks but has no following
         //      assistant response — the tool returned its result but Claude never replied.
         //      This is the case that triggers the "Continue from where you left off." synthetic
         //      turn on --resume. Removing it eliminates the synthetic turn entirely.
         //
-        // By handling both in a single loop, the chain A→B→A is resolved in one pass:
-        //   user/tool_result (removed) → assistant/tool_use (removed) → clean state.
+        // By handling all patterns in a single loop, chains like A→B→C→D are resolved in one pass.
         while (lines.length > 0) {
             const lastLine: string = lines[lines.length - 1];
             const entry = JSON.parse(lastLine) as Record<string, unknown>;
             const message = entry.message as Record<string, unknown> | undefined;
             const content = message?.content;
 
+            // Pattern A: Skip trailing metadata entries so the repair reaches conversation entries
+            if (entry.type === 'last-prompt' || entry.type === 'queue-operation') {
+                lines.pop();
+                trimCount++;
+                console.log(`WebSocket: [REPAIR] Removed trailing metadata entry (type: ${entry.type}, trimCount: ${trimCount})`.yellow);
+                continue;
+            }
+
             if (entry.type === 'assistant') {
+                // Pattern B: Incomplete streaming entry — stop_reason is null, meaning the
+                // assistant response was interrupted mid-stream and never finalized. The Claude
+                // CLI rejects the session on --resume when these raw NDJSON-format chunks are present.
+                if (message?.stop_reason === null) {
+                    lines.pop();
+                    trimCount++;
+                    console.log(`WebSocket: [REPAIR] Removed incomplete streaming assistant entry (stop_reason: null, trimCount: ${trimCount})`.yellow);
+                    continue;
+                }
+                // Pattern C: Orphaned tool_use (no following tool_result)
                 if (!Array.isArray(content)) break;
                 const hasToolUse: boolean = (content as Record<string, unknown>[]).some(
                     (block: Record<string, unknown>) => block.type === 'tool_use',
@@ -135,6 +164,7 @@ function repairOrphanedToolUse(projectDirHash: string, sessionId: string): void 
                 trimCount++;
                 console.log(`WebSocket: [REPAIR] Removed orphaned tool_use assistant entry (trimCount: ${trimCount})`.yellow);
             } else if (entry.type === 'user') {
+                // Pattern D: Orphaned tool_result (no following assistant response)
                 if (!Array.isArray(content) || content.length === 0) break;
                 const hasOnlyToolResults: boolean = (content as Record<string, unknown>[]).every(
                     (block: Record<string, unknown>) => block.type === 'tool_result',
@@ -154,6 +184,64 @@ function repairOrphanedToolUse(projectDirHash: string, sessionId: string): void 
         }
     } catch (err) {
         console.error(`WebSocket: [REPAIR] Failed to repair JSONL — ${err}`.red);
+    }
+}
+
+/**
+ * Read the first 'cwd' field found in a JSONL session file.
+ * Used to detect a mismatch between the path encoded into each JSONL line (from the
+ * original session) and the rawProjectDir the file was imported under. When they
+ * differ the Claude CLI rejects the session on --resume even though the file exists.
+ * Returns null if the file is missing or contains no cwd field.
+ */
+function readJsonlCwd(projectDirHash: string, sessionId: string): string | null {
+    const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+    const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
+    if (!fs.existsSync(jsonlPath)) return null;
+    try {
+        const lines: string[] = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean);
+        for (const line of lines) {
+            const entry = JSON.parse(line) as Record<string, unknown>;
+            if (typeof entry.cwd === 'string') return entry.cwd;
+        }
+    } catch {}
+    return null;
+}
+
+/**
+ * Patch every line in a JSONL session file that contains a 'cwd' field, replacing its
+ * value with newCwd. Used after detecting a cwd mismatch (readJsonlCwd vs rawProjectDir).
+ * Only rewrites the file if at least one line was actually changed.
+ * Safe to call on a valid JSONL — only the metadata 'cwd' field is touched; conversation
+ * content is untouched.
+ */
+function patchJsonlCwd(projectDirHash: string, sessionId: string, newCwd: string): void {
+    const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
+    const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
+    try {
+        const raw: string = fs.readFileSync(jsonlPath, 'utf-8');
+        const lines: string[] = raw.split('\n');
+        let patchedCount: number = 0;
+        const patched: string[] = lines.map((line: string) => {
+            if (!line.trim()) return line;
+            try {
+                const entry = JSON.parse(line) as Record<string, unknown>;
+                if (typeof entry.cwd === 'string' && entry.cwd !== newCwd) {
+                    entry.cwd = newCwd;
+                    patchedCount++;
+                    return JSON.stringify(entry);
+                }
+            } catch {}
+            return line;
+        });
+        if (patchedCount > 0) {
+            fs.writeFileSync(jsonlPath, patched.join('\n'), 'utf-8');
+            console.log(`WebSocket: [CWD-PATCH] Patched ${patchedCount} line(s) — cwd updated to: "${newCwd}"`.yellow);
+        } else {
+            console.log('WebSocket: [CWD-PATCH] No lines needed patching'.gray);
+        }
+    } catch (err: unknown) {
+        console.error(`WebSocket: [CWD-PATCH] Failed to patch JSONL cwd — ${err}`.red);
     }
 }
 
@@ -1095,6 +1183,19 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 clientMessage.projectDir = localRawProjectDir;
                                 console.log(`WebSocket: [TRACE] Reconstruction done — cwd set to: ${clientMessage.projectDir}`.cyan);
                             } else {
+                                // Detect and fix cwd mismatch before spawning.
+                                // The Claude CLI validates that the 'cwd' baked into each JSONL line
+                                // hashes to the same directory the file lives in. When a session is
+                                // imported with a remapped projectDir the internal cwd still references
+                                // the original path — the CLI rejects the session with "No conversation
+                                // found" even though the file is present and otherwise valid.
+                                // Fix: patch the cwd field on every line in-place so the JSONL matches
+                                // the new location. Only the metadata field is changed; content is untouched.
+                                const jsonlCwd: string | null = readJsonlCwd(localProjectDirHash, clientMessage.sessionId);
+                                if (jsonlCwd && jsonlCwd !== localRawProjectDir) {
+                                    console.log(`WebSocket: [TRACE] JSONL cwd mismatch — internal: "${jsonlCwd}", expected: "${localRawProjectDir}" — patching`.yellow);
+                                    patchJsonlCwd(localProjectDirHash, clientMessage.sessionId, localRawProjectDir);
+                                }
                                 // Set cwd even when local JSONL is valid — claude --resume hashes cwd
                                 // to locate the session file, so it must match the local project dir
                                 clientMessage.projectDir = localRawProjectDir;

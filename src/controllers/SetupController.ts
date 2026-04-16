@@ -1232,8 +1232,8 @@ const saveGroqConfigController = async (req: Request, res: Response) => {
                 success: false,
                 errorCode: generateInvalidCode('apiKey'),
                 errorMsg: isAuthError
-                    ? 'apiKey is invalid — Groq rejected the key. Please check and try again.'
-                    : 'Could not validate key against Groq — check the key and your network connection.',
+                    ? 'apiKey is invalid — Groq rejected the key. Please check and try again!'
+                    : 'Could not validate key against Groq — check the key and your network connection!',
             }));
             return;
         }
