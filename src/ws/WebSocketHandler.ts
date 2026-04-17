@@ -1273,6 +1273,16 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         }
                     }
 
+                    // Eagerly set activeProjectDir from the spawn message so autoSync is
+                    // scoped to the current project even if the system event arrives after
+                    // process_exit (e.g. Claude exits immediately with an error before emitting it).
+                    // Strip trailing slashes: SyncService.resolveProjectDirs converts the path with
+                    // NON_ALPHANUMERIC_REGEX, so a trailing slash becomes a trailing '-' which
+                    // won't match the actual ~/.claude/projects/ subdirectory, silently no-op-ing the sync.
+                    if (spawnMessage.projectDir) {
+                        activeProjectDir = spawnMessage.projectDir.replace(TRAILING_SLASHES_REGEX, '');
+                    }
+
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
                     claudeProcess = spawnClaude(spawnMessage, webSocket, (resultEvent: Record<string, unknown>) => {
                         // Persist context immediately for existing sessions (resume).
