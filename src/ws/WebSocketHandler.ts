@@ -800,7 +800,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
             if (event.type === 'system' && event.session_id) {
                 activeSessionId = event.session_id as string;
-                activeProjectDir = (event.cwd as string) || null;
+                // Only update activeProjectDir when cwd is actually present in the system event.
+                // Using || null would overwrite the eagerly-set value (from spawnMessage.projectDir)
+                // with null whenever a second system event fires without a cwd field (e.g. MCP server
+                // init events), silently triggering a full-scan autoSync({}) instead of a scoped one.
+                // Also strip trailing slashes for consistency with the eager-assignment path.
+                if (event.cwd) {
+                    activeProjectDir = (event.cwd as string).replace(TRAILING_SLASHES_REGEX, '');
+                }
                 registerSession(activeSessionId, webSocket);
                 upsertSessionOnInit(event);
 
@@ -1573,6 +1580,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         effort: switchMsg.effort,
                         thinking: switchMsg.thinking,
                     };
+
+                    // Eagerly set activeProjectDir so autoSync stays scoped after the model switch,
+                    // even if the system event fires without a cwd or arrives after process_exit.
+                    if (resumeMsg.projectDir) {
+                        activeProjectDir = resumeMsg.projectDir.replace(TRAILING_SLASHES_REGEX, '');
+                    }
 
                     claudeProcess = spawnClaude(resumeMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
