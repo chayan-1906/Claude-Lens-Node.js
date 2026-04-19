@@ -4,6 +4,7 @@ import path from "path";
 import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IR2Config} from "../types/setup";
+import ProjectModel from "../models/Project";
 import {getR2Config} from "../utils/localConfig";
 import SessionLineModel from "../models/SessionLine";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
@@ -223,6 +224,16 @@ class SessionService {
             throw error;
         } finally {
             await mongoSession.endSession();
+        }
+
+        // After commit: if this was the last session for its project, mark Project doc as orphaned
+        const remainingSessionCount: number = await SessionModel.countDocuments({projectDir: session.projectDir});
+        if (remainingSessionCount === 0) {
+            await ProjectModel.updateOne(
+                {projectDir: session.projectDir},
+                {$set: {orphanedAt: new Date()}},
+            );
+            console.log('Database: Project marked as orphaned'.cyan, {projectDir: session.projectDir});
         }
 
         // After commit: delete pre-collected R2 objects (URLs captured before MongoDB was cleared)

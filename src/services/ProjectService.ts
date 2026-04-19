@@ -4,13 +4,14 @@ import TaskModel from "../models/Task";
 import {IR2Config} from "../types/setup";
 import MemoryModel from "../models/Memory";
 import MessageModel from "../models/Message";
+import ProjectModel from "../models/Project";
 import SessionModel from "../models/Session";
 import {getR2Config} from "../utils/localConfig";
 import SessionLineModel from "../models/SessionLine";
 import {reclaimR2Storage} from "../utils/reclaimR2Storage";
 import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
-import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse, IProject} from "../types/project";
+import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse, IProject, IRenameProjectParams, IRenameProjectResponse} from "../types/project";
 
 class ProjectService {
     static async getAllProjects(): Promise<IGetAllProjectsResponse> {
@@ -20,16 +21,35 @@ class ProjectService {
             {
                 $group: {
                     _id: {
-                        rawProjectDir: "$rawProjectDir",
-                        projectDir: "$projectDir",
+                        rawProjectDir: '$rawProjectDir',
+                        projectDir: '$projectDir',
                     },
                 },
             },
             {
                 $project: {
                     _id: 0,
-                    rawProjectDir: "$_id.rawProjectDir",
-                    projectDir: "$_id.projectDir",
+                    rawProjectDir: '$_id.rawProjectDir',
+                    projectDir: '$_id.projectDir',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'projects',
+                    localField: 'rawProjectDir',
+                    foreignField: 'rawProjectDir',
+                    as: 'projectMeta',
+                },
+            },
+            {
+                $addFields: {
+                    customName: {$arrayElemAt: ['$projectMeta.customName', 0]},
+                    description: {$arrayElemAt: ['$projectMeta.description', 0]},
+                },
+            },
+            {
+                $project: {
+                    projectMeta: 0,
                 },
             },
         ]);
@@ -121,6 +141,10 @@ class ProjectService {
                 {projectDir},
                 {session: mongoSession},
             ));
+            await ProjectModel.deleteOne(
+                {projectDir},
+                {session: mongoSession},
+            );
 
             await mongoSession.commitTransaction();
             console.log('Database: Project deleted'.cyan, {projectDir, deletedSessionsCount, deletedMessagesCount, deletedSessionLinesCount, deletedTasksCount, deletedMemoriesCount});
@@ -148,6 +172,35 @@ class ProjectService {
             deletedMemories: deletedMemoriesCount,
             deletedAttachments: (deletedAttachments as number) ?? 0,
         };
+    }
+
+    static async renameProject({projectDir, customName, description}: IRenameProjectParams): Promise<IRenameProjectResponse> {
+        console.log('Service: ProjectService.renameProject called'.cyan.italic, {projectDir, customName});
+
+        // Verify the project exists and retrieve rawProjectDir for upsert
+        const session = await SessionModel.findOne({projectDir}, {rawProjectDir: 1}).lean();
+        if (!session?.rawProjectDir) {
+            return {error: generateNotFoundCode('project')};
+        }
+
+        const updated = await ProjectModel.findOneAndUpdate(
+            {projectDir},
+            {
+                $set: {customName, lastSessionAt: new Date(), ...(description !== undefined ? {description} : {})},
+                $setOnInsert: {rawProjectDir: session.rawProjectDir},
+            },
+            {upsert: true, returnDocument: 'after'},
+        ).lean();
+
+        const project: IProject = {
+            rawProjectDir: updated!.rawProjectDir,
+            projectDir: updated!.projectDir,
+            customName: updated!.customName,
+            description: updated!.description,
+        };
+
+        console.log('Database: Project renamed'.cyan, project);
+        return {project};
     }
 }
 

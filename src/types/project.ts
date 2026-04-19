@@ -3,6 +3,19 @@
 export interface IProject {
     rawProjectDir: string;
     projectDir: string;
+    customName?: string;
+    description?: string;
+}
+
+export interface IRenameProjectParams {
+    projectDir: string;
+    customName: string;
+    description?: string;
+}
+
+export interface IRenameProjectResponse {
+    project?: IProject;
+    error?: string;
 }
 
 

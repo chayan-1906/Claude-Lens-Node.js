@@ -9,6 +9,7 @@ import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IdeService} from "./IdeService";
 import MemoryModel from "../models/Memory";
+import ProjectModel from "../models/Project";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
@@ -880,6 +881,17 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 directWriteSessionOid = session!._id as Types.ObjectId;
                 lastWrittenUuid = null;
                 console.log(`WebSocket: [direct-write] Session upserted — sessionId: ${sessionId}, _id: ${directWriteSessionOid}`.green);
+
+                await ProjectModel.findOneAndUpdate(
+                    {projectDir},
+                    {
+                        $setOnInsert: {rawProjectDir: canonicalCwd},
+                        $set: {lastSessionAt: new Date()},
+                        $unset: {orphanedAt: ''},
+                    },
+                    {upsert: true},
+                );
+                console.log(`WebSocket: [direct-write] Project upserted — projectDir: ${projectDir}`.green);
             } catch (error: unknown) {
                 console.error(`WebSocket: [direct-write] Failed to upsert session — ${error}`.red);
             }
