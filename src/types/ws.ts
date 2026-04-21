@@ -84,9 +84,15 @@ export interface IToolApprovalDecision {
 
 export interface IPendingApproval {
     sessionId: string;
+    toolName: string;
     resolve: (decision: IToolApprovalDecision) => void;
     reject: (reason: Error) => void;
     timeout: ReturnType<typeof setTimeout>;
+}
+
+export interface IPendingApprovalMeta {
+    sessionId: string;
+    toolName: string;
 }
 
 /** Client → Server: interrupt/stop Claude's current execution (equivalent to Esc in terminal) */
@@ -108,6 +114,10 @@ export interface IToolApprovalResponseMessage {
     requestId: string;
     decision: 'allow' | 'deny';
     reason?: string;
+    /** When true and decision === 'allow', persist the tool name into the active
+     *  project's .claude/settings.local.json so future sessions skip the prompt,
+     *  and cache it in the backend so the current claude -p spawn also skips */
+    allowAll?: boolean;
 }
 
 /** Client → Server: trigger manual JSONL backup to R2 (sessionId for historical sessions, omit for active) */
@@ -153,6 +163,10 @@ export interface IToolApprovalRequestMessage {
     toolName: string;
     toolInput: Record<string, unknown>;
     toolUseId: string;
+    /** True when the backend has a known activeProjectDir for this session — i.e. a
+     *  subsequent 'Allow All' will persist to <projectDir>/.claude/settings.local.json.
+     *  False means allow-all would be session-only (in-memory, lost on next spawn). */
+    projectActive: boolean;
 }
 
 /** Server → Client: confirms the Claude process was killed after stop_execution */

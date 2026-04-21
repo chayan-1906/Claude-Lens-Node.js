@@ -14,13 +14,14 @@ import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
 import {TRAILING_SLASHES_REGEX} from "../utils/constants";
+import {addToolToProjectAllowList} from "../permissions/allowList";
 import SessionLineModel, {ISessionLine} from "../models/SessionLine";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
 import {buildLosslessMongoJsonlLines, canBuildLosslessMongoJsonl} from "../utils/sessionJsonl";
-import {cleanupSession, registerIdeOpenDiffHook, registerSession, resolveApproval} from "./toolApprovalStore";
 import {resolveCanonicalPath, resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
+import {addSessionAllowAll, cleanupSession, getPendingApprovalMeta, registerIdeOpenDiffHook, registerSession, resolveApproval, setSessionProjectDir} from "./toolApprovalStore";
 import {
     ClientMessage,
     IAttachmentMeta,
@@ -30,6 +31,7 @@ import {
     IResumeSessionMessage,
     ISendMessageMessage,
     ISwitchModelMessage,
+    IPendingApprovalMeta,
     IToolApprovalResponseMessage,
 } from "../types/ws";
 
@@ -810,6 +812,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     activeProjectDir = (event.cwd as string).replace(TRAILING_SLASHES_REGEX, '');
                 }
                 registerSession(activeSessionId, webSocket);
+                setSessionProjectDir(activeSessionId, activeProjectDir);
                 upsertSessionOnInit(event);
 
                 // Trigger #4: start idle backup timer when session begins
@@ -1399,7 +1402,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         if (event.type === 'system') {
                             newSessionId = event.session_id as string;
                             activeSessionId = newSessionId;
+                            if (event.cwd) {
+                                activeProjectDir = (event.cwd as string).replace(TRAILING_SLASHES_REGEX, '');
+                            }
                             registerSession(activeSessionId, webSocket);
+                            setSessionProjectDir(activeSessionId, activeProjectDir);
                             upsertSessionOnInit(event);
                             console.log(`WebSocket: edit_session — new session_id captured: ${newSessionId}`.cyan);
                         }
@@ -1648,7 +1655,40 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
                 case 'tool_approval_response': {
                     const approvalMsg: IToolApprovalResponseMessage = clientMessage as IToolApprovalResponseMessage;
-                    console.log(`WebSocket: Received tool_approval_response (requestId: ${approvalMsg.requestId}, decision: ${approvalMsg.decision})`.cyan);
+                    console.log(`WebSocket: Received tool_approval_response (requestId: ${approvalMsg.requestId}, decision: ${approvalMsg.decision}, allowAll: ${approvalMsg.allowAll ?? false})`.cyan);
+
+                    // Allow All — persist to the active project's settings.local.json AND cache
+                    // in this session so the running claude -p spawn stops prompting immediately.
+                    // Errors are surfaced to the frontend but never block the current approval:
+                    // the user already consented to THIS call, so we still resolve it as 'allow'.
+                    if (approvalMsg.allowAll === true && approvalMsg.decision === 'allow') {
+                        const meta: IPendingApprovalMeta | null = getPendingApprovalMeta(approvalMsg.requestId);
+                        if (meta && activeProjectDir) {
+                            try {
+                                await addToolToProjectAllowList(activeProjectDir, meta.toolName);
+                                addSessionAllowAll(meta.sessionId, meta.toolName);
+                            } catch (error: unknown) {
+                                const message: string = error instanceof Error ? error.message : String(error);
+                                console.error(`WebSocket: Allow-All persistence failed for '${meta.toolName}' — ${message}`.red);
+                                if (webSocket.readyState === WebSocket.OPEN) {
+                                    webSocket.send(JSON.stringify({
+                                        type: 'error',
+                                        message: `Failed to persist Allow All for ${meta.toolName}: ${message}!`,
+                                    }));
+                                }
+                            }
+                        } else if (meta && !activeProjectDir) {
+                            addSessionAllowAll(meta.sessionId, meta.toolName);
+                            console.warn(`WebSocket: Allow-All for '${meta.toolName}' cached in session only — no activeProjectDir to persist to`.yellow);
+                            if (webSocket.readyState === WebSocket.OPEN) {
+                                webSocket.send(JSON.stringify({
+                                    type: 'error',
+                                    message: `Allow All for ${meta.toolName} is active for this session only — project directory not yet known, could not persist!`,
+                                }));
+                            }
+                        }
+                    }
+
                     const resolved: boolean = resolveApproval(approvalMsg.requestId, {
                         permissionDecision: approvalMsg.decision,
                         permissionDecisionReason: approvalMsg.reason,
