@@ -82,6 +82,7 @@ const TaskSchema = new Schema<ITask>({
 });
 
 TaskSchema.index({sessionId: 1, taskId: 1}, {unique: true});
+TaskSchema.index({subject: 'text', description: 'text'});
 
 /** Mongoose model for Claude Code tasks */
 const TaskModel: ITaskModel = model<ITask, ITaskModel>('Task', TaskSchema);

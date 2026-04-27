@@ -14,6 +14,7 @@ import {getLocalIP} from "./utils/getLocalIP";
 import setupRoutes from "./routes/SetupRoutes";
 import voiceRoutes from "./routes/VoiceRoutes";
 import exportRoutes from "./routes/ExportRoutes";
+import searchRoutes from "./routes/SearchRoutes";
 import importRoutes from "./routes/ImportRoutes";
 import memoryRoutes from "./routes/MemoryRoutes";
 import projectRoutes from "./routes/ProjectRoutes";
@@ -44,6 +45,7 @@ app.use('/api/v1/voice', voiceRoutes);
 app.use('/api/v1/mcp', mcpRoutes);
 app.use('/api/v1/file-picker', filePickerRoutes);
 app.use('/api/v1/tool-approval', toolApprovalRoutes);
+app.use('/api/v1/search', searchRoutes);
 app.get('/', function (req: Request, res: Response) {
     return res.status(200).send('<h1>Welcome to Claude Lens Server</h1>');
 });

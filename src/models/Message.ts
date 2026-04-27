@@ -136,6 +136,7 @@ const MessageSchema = new Schema<IMessage>({
 // Without this, MongoDB must load all session messages into memory to sort them,
 // which exceeds the 33MB Atlas sort limit on large sessions.
 MessageSchema.index({sessionInternalId: 1, timestamp: 1});
+MessageSchema.index({'content': 'text', 'content.text': 'text', 'content.thinking': 'text'});
 
 /** Mongoose model for Claude Code messages */
 const MessageModel: IMessageModel = model<IMessage, IMessageModel>('Message', MessageSchema);

@@ -98,6 +98,8 @@ const SessionSchema = new Schema<ISession>({
     },
 });
 
+SessionSchema.index({title: 'text', description: 'text', slug: 'text'});
+
 /** Mongoose model for Claude Code sessions */
 const SessionModel: ISessionModel = model<ISession, ISessionModel>('Session', SessionSchema);
 
