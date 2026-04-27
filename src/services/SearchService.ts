@@ -41,15 +41,16 @@ class SearchService {
             ).sort({score: {$meta: 'textScore'}}).skip(skip).limit(limit).lean(),
         ]);
 
-        const messages: ISearchMessageResponse[] = msgs.map((m) => ({
+        const messages: ISearchMessageResponse[] = msgs.map((message) => ({
             _type: 'message' as const,
-            messageId: String(m._id),
-            snippet: makeSnippet(extractTextFromContent(m.content as string | ContentBlock[])),
-            role: m.role,
+            messageId: String(message._id),
+            uuid: message.uuid,
+            snippet: makeSnippet(extractTextFromContent(message.content as string | ContentBlock[])),
+            role: message.role,
             sessionId: session.sessionId,
             sessionTitle: session.title,
             projectDir: session.projectDir,
-            timestamp: m.timestamp.toISOString(),
+            timestamp: message.timestamp.toISOString(),
         }));
 
         const taskResults: ISearchTaskResponse[] = tasks.map((t) => ({
@@ -96,17 +97,18 @@ class SearchService {
             ).sort({score: {$meta: 'textScore'}}).skip(skip).limit(limit).lean(),
         ]);
 
-        const messages: ISearchMessageResponse[] = msgs.map((m) => {
-            const s = oidToSession.get(String(m.sessionInternalId));
+        const messages: ISearchMessageResponse[] = msgs.map((message) => {
+            const s = oidToSession.get(String(message.sessionInternalId));
             return {
                 _type: 'message' as const,
-                messageId: String(m._id),
-                snippet: makeSnippet(extractTextFromContent(m.content as string | ContentBlock[])),
-                role: m.role,
+                messageId: String(message._id),
+                uuid: message.uuid,
+                snippet: makeSnippet(extractTextFromContent(message.content as string | ContentBlock[])),
+                role: message.role,
                 sessionId: s?.sessionId ?? '',
                 sessionTitle: s?.title ?? '',
                 projectDir,
-                timestamp: m.timestamp.toISOString(),
+                timestamp: message.timestamp.toISOString(),
             };
         });
 
@@ -173,17 +175,18 @@ class SearchService {
             : [];
         const taskSessionMap = new Map(taskSessions.map((s) => [s.sessionId, s]));
 
-        const messages: ISearchMessageResponse[] = msgs.map((m) => {
-            const s = m.sessionInternalId as unknown as {sessionId: string; title: string; projectDir: string} | null;
+        const messages: ISearchMessageResponse[] = msgs.map((message) => {
+            const s = message.sessionInternalId as unknown as {sessionId: string; title: string; projectDir: string} | null;
             return {
                 _type: 'message' as const,
-                messageId: String(m._id),
-                snippet: makeSnippet(extractTextFromContent(m.content as string | ContentBlock[])),
-                role: m.role,
+                messageId: String(message._id),
+                uuid: message.uuid,
+                snippet: makeSnippet(extractTextFromContent(message.content as string | ContentBlock[])),
+                role: message.role,
                 sessionId: s?.sessionId ?? '',
                 sessionTitle: s?.title ?? '',
                 projectDir: s?.projectDir ?? '',
-                timestamp: m.timestamp.toISOString(),
+                timestamp: message.timestamp.toISOString(),
             };
         });
 

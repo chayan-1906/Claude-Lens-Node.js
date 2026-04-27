@@ -13,6 +13,7 @@ export interface ISearchQuery {
 export interface ISearchMessageResponse {
     _type: 'message';
     messageId: string;
+    uuid: string;
     snippet: string;
     role: string;
     sessionId: string;
