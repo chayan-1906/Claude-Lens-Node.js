@@ -41,6 +41,11 @@ import {
  * where projectDirHash replaces all non-alphanumeric chars with '-'.
  */
 function isLocalSessionAvailable(projectDirHash: string, sessionId: string): boolean {
+    if (!projectDirHash) {
+        console.warn(`WebSocket: [TRACE] isLocalSessionAvailable — empty projectDirHash, root-level session files are not valid project sessions → false`.yellow);
+        return false;
+    }
+
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
     const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
 
@@ -870,7 +875,10 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         const upsertSessionOnInit = async (event: Record<string, unknown>): Promise<void> => {
             if (event.type !== 'system' || !event.session_id) return;
             const sessionId: string = event.session_id as string;
-            const cwd: string = (event.cwd as string) || '';
+            // Fall back to activeProjectDir when the system event omits cwd (e.g. MCP init events,
+            // older CLI versions). Without the fallback, MongoDB gets projectDir: "" and the session
+            // becomes permanently unresumable — the same failure mode as b9e1e513.
+            const cwd: string = (event.cwd as string) || activeProjectDir || '';
             const model: string = (event.model as string) || '';
             const canonicalCwd: string = resolveCanonicalPath(cwd);
             const projectDir: string = toProjectDirHash(canonicalCwd);
@@ -1216,15 +1224,24 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                                 // found" even though the file is present and otherwise valid.
                                 // Fix: patch the cwd field on every line in-place so the JSONL matches
                                 // the new location. Only the metadata field is changed; content is untouched.
+                                let effectiveRawProjectDir: string = localRawProjectDir;
                                 const jsonlCwd: string | null = readJsonlCwd(localProjectDirHash, clientMessage.sessionId);
-                                if (jsonlCwd && jsonlCwd !== localRawProjectDir) {
-                                    console.log(`WebSocket: [TRACE] JSONL cwd mismatch — internal: "${jsonlCwd}", expected: "${localRawProjectDir}" — patching`.yellow);
-                                    patchJsonlCwd(localProjectDirHash, clientMessage.sessionId, localRawProjectDir);
+                                if (!effectiveRawProjectDir && jsonlCwd) {
+                                    // DB has empty projectDir — recover the real cwd from the JSONL and heal MongoDB
+                                    effectiveRawProjectDir = jsonlCwd;
+                                    await SessionModel.updateOne(
+                                        {sessionId: clientMessage.sessionId},
+                                        {$set: {projectDir: toProjectDirHash(jsonlCwd), rawProjectDir: jsonlCwd}},
+                                    );
+                                    console.log(`WebSocket: [TRACE] Recovered projectDir from JSONL cwd: ${jsonlCwd} — DB healed`.green);
+                                } else if (effectiveRawProjectDir && jsonlCwd && jsonlCwd !== effectiveRawProjectDir) {
+                                    console.log(`WebSocket: [TRACE] JSONL cwd mismatch — internal: "${jsonlCwd}", expected: "${effectiveRawProjectDir}" — patching`.yellow);
+                                    patchJsonlCwd(localProjectDirHash, clientMessage.sessionId, effectiveRawProjectDir);
                                 }
                                 // Set cwd even when local JSONL is valid — claude --resume hashes cwd
                                 // to locate the session file, so it must match the local project dir
-                                clientMessage.projectDir = localRawProjectDir;
-                                console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${localRawProjectDir}`.cyan);
+                                clientMessage.projectDir = effectiveRawProjectDir;
+                                console.log(`WebSocket: [TRACE] Local JSONL valid — skipping reconstruction, cwd set to: ${effectiveRawProjectDir}`.cyan);
                             }
 
                             // Always attempt memory restore — runs in both localAvailable and reconstruction
