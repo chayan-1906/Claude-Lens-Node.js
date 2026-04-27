@@ -5,10 +5,10 @@ import MemoryModel from "../models/Memory";
 import SessionModel from "../models/Session";
 import MessageModel, {ContentBlock} from "../models/Message";
 import {extractTextFromContent, makeSnippet} from "../utils/searchUtils";
-import {ISearchMemoryResult, ISearchMessageResult, ISearchQuery, ISearchResults, ISearchSessionResult, ISearchTaskResult} from "../types/search";
+import {ISearchMemoryResponse, ISearchMessageResponse, ISearchQuery, ISearchResponse, ISearchSessionResponse, ISearchTaskResponse} from "../types/search";
 
 class SearchService {
-    static async search({q, scope, sessionId, projectDir, limit = 20, skip = 0}: ISearchQuery): Promise<ISearchResults> {
+    static async search({q, scope, sessionId, projectDir, limit = 20, skip = 0}: ISearchQuery): Promise<ISearchResponse> {
         console.log('Service: SearchService.search called'.cyan.italic, {q, scope, sessionId, projectDir, limit, skip});
 
         const safeLimit = Math.min(50, Math.max(1, limit));
@@ -24,7 +24,7 @@ class SearchService {
         }
     }
 
-    private static async searchSession(q: string, sessionId: string, limit: number, skip: number): Promise<ISearchResults> {
+    private static async searchSession(q: string, sessionId: string, limit: number, skip: number): Promise<ISearchResponse> {
         const session = await SessionModel.findOne({sessionId}, 'sessionId title projectDir').lean();
         if (!session) return SearchService.empty();
 
@@ -41,7 +41,7 @@ class SearchService {
             ).sort({score: {$meta: 'textScore'}}).skip(skip).limit(limit).lean(),
         ]);
 
-        const messages: ISearchMessageResult[] = msgs.map((m) => ({
+        const messages: ISearchMessageResponse[] = msgs.map((m) => ({
             _type: 'message' as const,
             messageId: String(m._id),
             snippet: makeSnippet(extractTextFromContent(m.content as string | ContentBlock[])),
@@ -52,7 +52,7 @@ class SearchService {
             timestamp: m.timestamp.toISOString(),
         }));
 
-        const taskResults: ISearchTaskResult[] = tasks.map((t) => ({
+        const taskResults: ISearchTaskResponse[] = tasks.map((t) => ({
             _type: 'task' as const,
             taskInternalId: String(t._id),
             snippet: makeSnippet(t.description),
@@ -66,7 +66,7 @@ class SearchService {
         return {messages, sessions: [], tasks: taskResults, memories: []};
     }
 
-    private static async searchProject(q: string, projectDir: string, limit: number, skip: number): Promise<ISearchResults> {
+    private static async searchProject(q: string, projectDir: string, limit: number, skip: number): Promise<ISearchResponse> {
         const projectSessions = await SessionModel.find({projectDir}, 'sessionId title projectDir').lean();
         const sessionOids: Types.ObjectId[] = projectSessions.map((s) => s._id as Types.ObjectId);
         const sessionIdStrings: string[] = projectSessions.map((s) => s.sessionId);
@@ -96,7 +96,7 @@ class SearchService {
             ).sort({score: {$meta: 'textScore'}}).skip(skip).limit(limit).lean(),
         ]);
 
-        const messages: ISearchMessageResult[] = msgs.map((m) => {
+        const messages: ISearchMessageResponse[] = msgs.map((m) => {
             const s = oidToSession.get(String(m.sessionInternalId));
             return {
                 _type: 'message' as const,
@@ -110,7 +110,7 @@ class SearchService {
             };
         });
 
-        const sessions: ISearchSessionResult[] = sessionDocs.map((s) => ({
+        const sessions: ISearchSessionResponse[] = sessionDocs.map((s) => ({
             _type: 'session' as const,
             sessionId: s.sessionId,
             snippet: makeSnippet(s.description ?? s.title),
@@ -120,7 +120,7 @@ class SearchService {
             updatedAt: s.updatedAt.toISOString(),
         }));
 
-        const taskResults: ISearchTaskResult[] = tasks.map((t) => {
+        const taskResults: ISearchTaskResponse[] = tasks.map((t) => {
             const s = sessionMap.get(t.sessionId);
             return {
                 _type: 'task' as const,
@@ -134,7 +134,7 @@ class SearchService {
             };
         });
 
-        const memoryResults: ISearchMemoryResult[] = memories.map((mem) => ({
+        const memoryResults: ISearchMemoryResponse[] = memories.map((mem) => ({
             _type: 'memory' as const,
             memoryId: String(mem._id),
             snippet: makeSnippet(mem.content),
@@ -145,7 +145,7 @@ class SearchService {
         return {messages, sessions, tasks: taskResults, memories: memoryResults};
     }
 
-    private static async searchGlobal(q: string, limit: number, skip: number): Promise<ISearchResults> {
+    private static async searchGlobal(q: string, limit: number, skip: number): Promise<ISearchResponse> {
         const [msgs, sessionDocs, tasks, memories] = await Promise.all([
             MessageModel.find(
                 {$text: {$search: q}},
@@ -173,7 +173,7 @@ class SearchService {
             : [];
         const taskSessionMap = new Map(taskSessions.map((s) => [s.sessionId, s]));
 
-        const messages: ISearchMessageResult[] = msgs.map((m) => {
+        const messages: ISearchMessageResponse[] = msgs.map((m) => {
             const s = m.sessionInternalId as unknown as {sessionId: string; title: string; projectDir: string} | null;
             return {
                 _type: 'message' as const,
@@ -187,7 +187,7 @@ class SearchService {
             };
         });
 
-        const sessions: ISearchSessionResult[] = sessionDocs.map((s) => ({
+        const sessions: ISearchSessionResponse[] = sessionDocs.map((s) => ({
             _type: 'session' as const,
             sessionId: s.sessionId,
             snippet: makeSnippet(s.description ?? s.title),
@@ -197,7 +197,7 @@ class SearchService {
             updatedAt: s.updatedAt.toISOString(),
         }));
 
-        const taskResults: ISearchTaskResult[] = tasks.map((t) => {
+        const taskResults: ISearchTaskResponse[] = tasks.map((t) => {
             const s = taskSessionMap.get(t.sessionId);
             return {
                 _type: 'task' as const,
@@ -211,7 +211,7 @@ class SearchService {
             };
         });
 
-        const memoryResults: ISearchMemoryResult[] = memories.map((mem) => ({
+        const memoryResults: ISearchMemoryResponse[] = memories.map((mem) => ({
             _type: 'memory' as const,
             memoryId: String(mem._id),
             snippet: makeSnippet(mem.content),
@@ -222,7 +222,7 @@ class SearchService {
         return {messages, sessions, tasks: taskResults, memories: memoryResults};
     }
 
-    private static empty(): ISearchResults {
+    private static empty(): ISearchResponse {
         return {
             messages: [],
             sessions: [],

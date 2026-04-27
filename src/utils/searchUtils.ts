@@ -1,6 +1,6 @@
 import {ContentBlock} from "../models/Message";
 
-const SNIPPET_LEN = 150;
+const SNIPPET_LEN = 3000;
 
 export function extractTextFromContent(content: string | ContentBlock[]): string {
     if (typeof content === 'string') return content;

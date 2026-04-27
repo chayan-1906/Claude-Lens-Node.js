@@ -10,7 +10,7 @@ export interface ISearchQuery {
     skip?: number;
 }
 
-export interface ISearchMessageResult {
+export interface ISearchMessageResponse {
     _type: 'message';
     messageId: string;
     snippet: string;
@@ -21,7 +21,7 @@ export interface ISearchMessageResult {
     timestamp: string;
 }
 
-export interface ISearchSessionResult {
+export interface ISearchSessionResponse {
     _type: 'session';
     sessionId: string;
     snippet: string;
@@ -31,7 +31,7 @@ export interface ISearchSessionResult {
     updatedAt: string;
 }
 
-export interface ISearchTaskResult {
+export interface ISearchTaskResponse {
     _type: 'task';
     taskInternalId: string;
     snippet: string;
@@ -42,7 +42,7 @@ export interface ISearchTaskResult {
     projectDir: string;
 }
 
-export interface ISearchMemoryResult {
+export interface ISearchMemoryResponse {
     _type: 'memory';
     memoryId: string;
     snippet: string;
@@ -50,9 +50,9 @@ export interface ISearchMemoryResult {
     projectDir: string;
 }
 
-export interface ISearchResults {
-    messages: ISearchMessageResult[];
-    sessions: ISearchSessionResult[];
-    tasks: ISearchTaskResult[];
-    memories: ISearchMemoryResult[];
+export interface ISearchResponse {
+    messages: ISearchMessageResponse[];
+    sessions: ISearchSessionResponse[];
+    tasks: ISearchTaskResponse[];
+    memories: ISearchMemoryResponse[];
 }
