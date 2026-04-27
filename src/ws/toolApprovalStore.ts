@@ -1,4 +1,5 @@
 import {WebSocket} from "ws";
+import {readProjectAllowList} from "../permissions/allowList";
 import {IPendingApproval, IPendingApprovalMeta, IToolApprovalDecision, IToolApprovalDetails} from "../types/ws";
 
 /** ------------- Session → WebSocket registry ------------- */
@@ -70,6 +71,27 @@ function getSessionWebSocket(sessionId: string): WebSocket | undefined {
  * Cleared in cleanupSession so a fresh spawn starts from the (now-updated) settings file.
  */
 const sessionAllowAll: Map<string, Set<string>> = new Map();
+
+/**
+ * Read settings.local.json for the project and pre-populate sessionAllowAll with
+ * every tool already in permissions.allow. Called once per session when activeProjectDir
+ * becomes known (system event). This ensures tools persisted from a previous session
+ * are auto-approved immediately — the PreToolUse hook always fires regardless of the
+ * allow list, so without this the frontend would still show a prompt.
+ */
+async function initSessionAllowAll(sessionId: string, projectDir: string): Promise<void> {
+    try {
+        const allowList: string[] = await readProjectAllowList(projectDir);
+        for (const toolName of allowList) {
+            addSessionAllowAll(sessionId, toolName);
+        }
+        if (allowList.length > 0) {
+            console.log(`ToolApprovalStore: Pre-populated session allow-all from settings (sessionId: ${sessionId}, tools: ${allowList.join(', ')})`.cyan);
+        }
+    } catch (error: unknown) {
+        console.warn(`ToolApprovalStore: Failed to pre-populate session allow-all — ${error}`.yellow);
+    }
+}
 
 function addSessionAllowAll(sessionId: string, toolName: string): void {
     let set: Set<string> | undefined = sessionAllowAll.get(sessionId);
@@ -191,4 +213,4 @@ function cleanupSession(sessionId: string): void {
     unregisterIdeOpenDiffHook(sessionId);
 }
 
-export {registerSession, unregisterSession, getSessionWebSocket, createApproval, resolveApproval, cleanupSession, registerIdeOpenDiffHook, addSessionAllowAll, getPendingApprovalMeta, setSessionProjectDir};
+export {registerSession, unregisterSession, getSessionWebSocket, createApproval, resolveApproval, cleanupSession, registerIdeOpenDiffHook, addSessionAllowAll, initSessionAllowAll, getPendingApprovalMeta, setSessionProjectDir};

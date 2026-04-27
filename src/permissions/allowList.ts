@@ -84,4 +84,18 @@ async function addToolToProjectAllowList(projectDir: string, toolName: string): 
     await tracked;
 }
 
-export {addToolToProjectAllowList, resolveSettingsPath};
+/**
+ * Read the current allow list from the project's settings.local.json.
+ * Returns an empty array if the file is missing or has no allow entries.
+ * Used at session start to pre-populate the in-memory sessionAllowAll cache
+ * so tools persisted in a previous session are auto-approved immediately.
+ */
+async function readProjectAllowList(projectDir: string): Promise<string[]> {
+    if (!projectDir) return [];
+    const settingsPath: string = resolveSettingsPath(projectDir);
+    const settings: IPermissionsSettings = await readSettings(settingsPath);
+    const allow = settings.permissions?.allow;
+    return Array.isArray(allow) ? allow : [];
+}
+
+export {addToolToProjectAllowList, readProjectAllowList, resolveSettingsPath};

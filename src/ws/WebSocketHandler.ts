@@ -2,10 +2,10 @@ import "colors";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import {Types} from "mongoose";
 import {ChildProcess} from "child_process";
 import {WebSocket, WebSocketServer} from "ws";
 import {IncomingMessage, Server as HttpServer} from "http";
-import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IdeService} from "./IdeService";
 import MemoryModel from "../models/Memory";
@@ -21,7 +21,7 @@ import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
 import {buildLosslessMongoJsonlLines, canBuildLosslessMongoJsonl} from "../utils/sessionJsonl";
 import {resolveCanonicalPath, resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
-import {addSessionAllowAll, cleanupSession, getPendingApprovalMeta, registerIdeOpenDiffHook, registerSession, resolveApproval, setSessionProjectDir} from "./toolApprovalStore";
+import {addSessionAllowAll, cleanupSession, getPendingApprovalMeta, initSessionAllowAll, registerIdeOpenDiffHook, registerSession, resolveApproval, setSessionProjectDir} from "./toolApprovalStore";
 import {
     ClientMessage,
     IAttachmentMeta,
@@ -813,6 +813,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 }
                 registerSession(activeSessionId, webSocket);
                 setSessionProjectDir(activeSessionId, activeProjectDir);
+                if (activeProjectDir) {
+                    initSessionAllowAll(activeSessionId, activeProjectDir);
+                }
                 upsertSessionOnInit(event);
 
                 // Trigger #4: start idle backup timer when session begins
@@ -1407,6 +1410,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             }
                             registerSession(activeSessionId, webSocket);
                             setSessionProjectDir(activeSessionId, activeProjectDir);
+                            if (activeProjectDir) {
+                                initSessionAllowAll(activeSessionId, activeProjectDir);
+                            }
                             upsertSessionOnInit(event);
                             console.log(`WebSocket: edit_session — new session_id captured: ${newSessionId}`.cyan);
                         }
