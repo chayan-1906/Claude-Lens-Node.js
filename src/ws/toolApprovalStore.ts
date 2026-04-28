@@ -133,17 +133,33 @@ function getPendingApprovalMeta(requestId: string): IPendingApprovalMeta | null 
  * Short-circuit: if the session has previously Allow-All'd this toolName, resolve
  * with 'allow' immediately — no WS round-trip, no frontend prompt.
  */
-function createApproval(details: IToolApprovalDetails): Promise<IToolApprovalDecision> {
+async function createApproval(details: IToolApprovalDetails): Promise<IToolApprovalDecision> {
     if (isSessionAllowedAll(details.sessionId, details.toolName)) {
         console.log(`ToolApprovalStore: Auto-allowed via session cache (sessionId: ${details.sessionId}, tool: ${details.toolName})`.green);
         return Promise.resolve({permissionDecision: 'allow'});
     }
 
-    const ws: WebSocket | undefined = getSessionWebSocket(details.sessionId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.log(`ToolApprovalStore: createApproval — looking up WS (sessionId: ${details.sessionId}, tool: ${details.toolName}, requestId: ${details.requestId})`.cyan);
+
+    let webSocket: WebSocket | undefined = getSessionWebSocket(details.sessionId);
+    if (!webSocket || webSocket.readyState !== WebSocket.OPEN) {
+        console.warn(`ToolApprovalStore: No WS for session ${details.sessionId} on first try — entering retry loop (race guard)`.yellow);
+        for (let i = 0; i < 5; i++) {
+            await new Promise<void>(resolve => setTimeout(resolve, 200));
+            webSocket = getSessionWebSocket(details.sessionId);
+            if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+                console.log(`ToolApprovalStore: WS found after ${(i + 1) * 200}ms retry (sessionId: ${details.sessionId})`.green);
+                break;
+            }
+        }
+    }
+
+    if (!webSocket || webSocket.readyState !== WebSocket.OPEN) {
+        console.warn(`ToolApprovalStore: No active WebSocket for session ${details.sessionId} after retry — rejecting`.red);
         return Promise.reject(new Error(`No active WebSocket for session ${details.sessionId}`));
     }
 
+    const activeWebSocket: WebSocket = webSocket;
     return new Promise<IToolApprovalDecision>((resolve, reject) => {
         const timeout: ReturnType<typeof setTimeout> = setTimeout(() => {
             pendingApprovals.delete(details.requestId);
@@ -164,7 +180,7 @@ function createApproval(details: IToolApprovalDetails): Promise<IToolApprovalDec
 
         // Send approval request to the frontend
         const projectActive: boolean = !!getSessionProjectDir(details.sessionId);
-        ws.send(JSON.stringify({
+        activeWebSocket.send(JSON.stringify({
             type: 'tool_approval_request',
             requestId: details.requestId,
             sessionId: details.sessionId,

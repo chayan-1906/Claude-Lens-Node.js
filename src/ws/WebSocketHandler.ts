@@ -1325,6 +1325,13 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         activeProjectDir = spawnMessage.projectDir.replace(TRAILING_SLASHES_REGEX, '');
                     }
 
+                    // Eagerly register session WS before spawn to eliminate race with PreToolUse hook.
+                    // For resume_session, sessionId is known now. For new_session, it's unknown until
+                    // the system event — the retry loop in createApproval bridges that window instead.
+                    if (spawnMessage.type === 'resume_session') {
+                        registerSession((spawnMessage as IResumeSessionMessage).sessionId, webSocket);
+                        console.log(`WebSocket: [TRACE] Eagerly registered session WS before spawn (sessionId: ${(spawnMessage as IResumeSessionMessage).sessionId})`.cyan);
+                    }
                     console.log(`WebSocket: [TRACE] Spawning claude — type: ${spawnMessage.type}, cwd: ${spawnMessage.projectDir ?? 'undefined (inherits server cwd)'}`.cyan);
                     claudeProcess = spawnClaude(spawnMessage, webSocket, (resultEvent: Record<string, unknown>) => {
                         // Persist context immediately for existing sessions (resume).
@@ -1629,6 +1636,8 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         activeProjectDir = resumeMsg.projectDir.replace(TRAILING_SLASHES_REGEX, '');
                     }
 
+                    registerSession(resumeMsg.sessionId, webSocket);
+                    console.log(`WebSocket: [TRACE] Eagerly registered session WS before switch spawn (sessionId: ${resumeMsg.sessionId})`.cyan);
                     claudeProcess = spawnClaude(resumeMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
                         triggerResultEventBackup();
