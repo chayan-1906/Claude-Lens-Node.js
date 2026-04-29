@@ -47,12 +47,15 @@ function unregisterIdeOpenDiffHook(sessionId: string): void {
 }
 
 function registerSession(sessionId: string, webSocket: WebSocket): void {
+    const previousWebSocket: WebSocket | undefined = sessionWebSockets.get(sessionId);
     sessionWebSockets.set(sessionId, webSocket);
     console.log(`ToolApprovalStore: Registered session → WS (sessionId: ${sessionId})`.cyan);
 
-    // Re-send any approvals that were in-flight when the previous WS disconnected.
-    // Without this, a WS drop during a pending approval leaves the frontend with no modal
-    // and the hook stuck waiting forever.
+    // registerSession also fires on every Claude system event (MCP init, status, etc.) for
+    // the SAME WS — re-sending pending approvals there would push duplicates to the frontend.
+    // Only re-send when the WS is genuinely a new connection (reconnect after a real disconnect).
+    if (previousWebSocket === webSocket) return;
+
     for (const [requestId, pending] of pendingApprovals.entries()) {
         if (pending.sessionId !== sessionId) continue;
         if (webSocket.readyState !== WebSocket.OPEN) break;
