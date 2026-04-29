@@ -1726,7 +1726,17 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         permissionDecisionReason: approvalMsg.reason,
                     });
                     if (!resolved) {
-                        console.warn(`WebSocket: No pending approval found for requestId: ${approvalMsg.requestId}`.yellow);
+                        console.warn(`WebSocket: No pending approval found for requestId: ${approvalMsg.requestId} — telling frontend to dismiss stale modal`.yellow);
+                        // Approval no longer pending (already resolved/cleaned up). Tell the frontend
+                        // to drop any lingering queue entries for this requestId so the user stops
+                        // seeing the stale modal.
+                        if (webSocket.readyState === WebSocket.OPEN) {
+                            webSocket.send(JSON.stringify({
+                                type: 'tool_approval_auto_resolved',
+                                requestId: approvalMsg.requestId,
+                                decision: approvalMsg.decision,
+                            }));
+                        }
                     }
 
                     // Cancel the pending openDiff call (user approved via web UI, not IDE)
