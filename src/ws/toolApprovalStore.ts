@@ -132,7 +132,7 @@ function isSessionAllowedAll(sessionId: string, toolName: string): boolean {
 
 /** ------------- Pending approval requests ------------- */
 
-const APPROVAL_TIMEOUT_MS: number = 14_400_000; // 4 hours — allows long breaks (lunch, meetings) while Claude waits for approval
+const APPROVAL_TIMEOUT_MS: number = 86_400_000; // 24 hours — match native Claude Code's effectively-unlimited terminal prompt wait. Aligns with hook curl --max-time 86400 and settings.json hook timeout 86400000.
 const pendingApprovals: Map<string, IPendingApproval> = new Map();
 
 /**

@@ -5,7 +5,7 @@
 #
 # Registered in ~/.claude/settings.json with matcher: "Read|Edit|Write|NotebookEdit|Bash|WebSearch|WebFetch|mcp__.*"
 # Claude CLI pauses while this hook runs. Set the registered hook's "timeout"
-# in ~/.claude/settings.json to 7200000 (ms) to match this script's --max-time 7200 (s).
+# in ~/.claude/settings.json to 86400000 (ms) to match this script's --max-time 86400 (s).
 
 INPUT=$(cat)
 
@@ -25,7 +25,7 @@ RESPONSE=$(curl -s -X POST \
     -H 'Content-Type: application/json' \
     -d "$INPUT" \
     "http://localhost:20261/api/v1/tool-approval" \
-    --max-time 7200)
+    --max-time 86400)
 
 # If curl failed unexpectedly, fall back to native prompt (not deny)
 if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then

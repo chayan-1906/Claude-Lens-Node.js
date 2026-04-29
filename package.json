@@ -11,7 +11,8 @@
     "bundle": "ncc build dist/server.js -o build",
     "package": "ts-node src/scripts/package-script.ts",
     "start": "node dist/server.js",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "sync-app-hook": "node scripts/sync-app-hook.mjs"
   },
   "keywords": [],
   "dependencies": {

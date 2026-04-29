@@ -8,7 +8,7 @@ const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
 // Resolve hook path dynamically from the project root — works on any machine
 const HOOK_COMMAND = resolve(__dirname, '..', 'hooks', 'pretooluse-approval.sh');
 const MATCHER = 'Read|Edit|Write|NotebookEdit|Bash|WebSearch|WebFetch|mcp__.*';
-const TIMEOUT = 600000;
+const TIMEOUT = 86_400_000; // 24h — match hook curl --max-time and approve native Claude Code's effectively-unlimited prompt wait
 
 const targetHookEntry = {
     matcher: MATCHER,
@@ -40,21 +40,32 @@ try {
     );
 
     if (existingIndex !== -1) {
-        const existingCommand = settings.hooks.PreToolUse[existingIndex].hooks[0]?.command;
-        if (existingCommand === HOOK_COMMAND) {
+        const existingHook = settings.hooks.PreToolUse[existingIndex].hooks[0] ?? {};
+        const existingCommand = existingHook.command;
+        const existingTimeout = existingHook.timeout;
+        // Re-write the entry if EITHER the command path OR the timeout differ from the desired
+        // values. Previously this only checked command, so a stale TIMEOUT (e.g. an older
+        // 600000 from a previous version of this script) silently persisted in settings.json.
+        if (existingCommand === HOOK_COMMAND && existingTimeout === TIMEOUT) {
             console.log('[register-hook] PreToolUse approval hook already registered.');
         } else {
-            // Path changed (e.g. different machine) — update in place
             settings.hooks.PreToolUse[existingIndex] = targetHookEntry;
             writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
-            console.log(`[register-hook] Updated hook path: ${existingCommand} → ${HOOK_COMMAND}`);
+            const reasons = [];
+            if (existingCommand !== HOOK_COMMAND) {
+                reasons.push(`command: ${existingCommand} → ${HOOK_COMMAND}`);
+            }
+            if (existingTimeout !== TIMEOUT) {
+                reasons.push(`timeout: ${existingTimeout} → ${TIMEOUT}`);
+            }
+            console.log(`[register-hook] Updated hook entry — ${reasons.join(', ')}`);
         }
     } else {
         settings.hooks.PreToolUse.push(targetHookEntry);
         writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
         console.log('[register-hook] PreToolUse approval hook registered in ~/.claude/settings.json');
     }
-} catch (err) {
-    console.error('[register-hook] Failed to register hook:', err.message);
+} catch (error) {
+    console.error('[register-hook] Failed to register hook:', error.message);
     process.exit(1);
 }
