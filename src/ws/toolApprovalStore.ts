@@ -46,9 +46,28 @@ function unregisterIdeOpenDiffHook(sessionId: string): void {
     ideOpenDiffHooks.delete(sessionId);
 }
 
-function registerSession(sessionId: string, ws: WebSocket): void {
-    sessionWebSockets.set(sessionId, ws);
+function registerSession(sessionId: string, webSocket: WebSocket): void {
+    sessionWebSockets.set(sessionId, webSocket);
     console.log(`ToolApprovalStore: Registered session → WS (sessionId: ${sessionId})`.cyan);
+
+    // Re-send any approvals that were in-flight when the previous WS disconnected.
+    // Without this, a WS drop during a pending approval leaves the frontend with no modal
+    // and the hook stuck waiting forever.
+    for (const [requestId, pending] of pendingApprovals.entries()) {
+        if (pending.sessionId !== sessionId) continue;
+        if (webSocket.readyState !== WebSocket.OPEN) break;
+        const projectActive: boolean = !!getSessionProjectDir(sessionId);
+        webSocket.send(JSON.stringify({
+            type: 'tool_approval_request',
+            requestId,
+            sessionId,
+            toolName: pending.toolName,
+            toolInput: pending.toolInput,
+            toolUseId: pending.toolUseId,
+            projectActive,
+        }));
+        console.log(`ToolApprovalStore: Re-sent pending tool_approval_request to new WS (requestId: ${requestId}, tool: ${pending.toolName})`.yellow);
+    }
 }
 
 function unregisterSession(sessionId: string): void {
@@ -166,7 +185,7 @@ async function createApproval(details: IToolApprovalDetails): Promise<IToolAppro
             reject(new Error(`Approval request timed out after ${APPROVAL_TIMEOUT_MS / 1000}s`));
         }, APPROVAL_TIMEOUT_MS);
 
-        pendingApprovals.set(details.requestId, {sessionId: details.sessionId, toolName: details.toolName, resolve, reject, timeout});
+        pendingApprovals.set(details.requestId, {sessionId: details.sessionId, toolName: details.toolName, toolInput: details.toolInput, toolUseId: details.toolUseId, resolve, reject, timeout});
 
         // Fire IDE openDiff hook — best-effort, must never block or throw
         const ideHook: IdeOpenDiffHookFn | undefined = ideOpenDiffHooks.get(details.sessionId);

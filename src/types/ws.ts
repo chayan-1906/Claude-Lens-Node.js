@@ -85,6 +85,8 @@ export interface IToolApprovalDecision {
 export interface IPendingApproval {
     sessionId: string;
     toolName: string;
+    toolInput: Record<string, unknown>;
+    toolUseId: string;
     resolve: (decision: IToolApprovalDecision) => void;
     reject: (reason: Error) => void;
     timeout: ReturnType<typeof setTimeout>;

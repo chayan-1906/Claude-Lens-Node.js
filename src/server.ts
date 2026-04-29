@@ -23,6 +23,18 @@ import {attachWebSocket} from "./ws/WebSocketHandler";
 import filePickerRoutes from "./routes/FilePickerRoutes";
 import toolApprovalRoutes from "./routes/ToolApprovalRoutes";
 
+// Prepend HH:MM:SS.mmm to every console call — applied once at entry point so all modules inherit it
+const _origLog = console.log.bind(console);
+const _origWarn = console.warn.bind(console);
+const _origError = console.error.bind(console);
+const _ts = (): string => {
+    const n = new Date();
+    return `[${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}:${String(n.getSeconds()).padStart(2, '0')}.${String(n.getMilliseconds()).padStart(3, '0')}]`;
+};
+console.log = (...args: unknown[]): void => _origLog(_ts(), ...args);
+console.warn = (...args: unknown[]): void => _origWarn(_ts(), ...args);
+console.error = (...args: unknown[]): void => _origError(_ts(), ...args);
+
 // rest object
 const app: Express = express();
 const httpServer: HttpServer = createServer(app);
