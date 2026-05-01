@@ -6,6 +6,15 @@ import {IPendingApproval, IPendingApprovalMeta, IToolApprovalDecision, IToolAppr
 
 const sessionWebSockets: Map<string, WebSocket> = new Map();
 
+/**
+ * Tracks every session_id that has ever been registered as a Claude Lens session.
+ * Used by the tool-approval controller to distinguish Lens-managed sessions from
+ * the main Claude Code instance (which also triggers the global PreToolUse hook but
+ * should never be routed through the Lens approval UI). Never cleared — intentionally
+ * grows with the process lifetime (negligible overhead for a local server).
+ */
+const everRegisteredSessions: Set<string> = new Set();
+
 /** ------------- Session → activeProjectDir registry ------------- */
 
 /**
@@ -49,6 +58,7 @@ function unregisterIdeOpenDiffHook(sessionId: string): void {
 function registerSession(sessionId: string, webSocket: WebSocket): void {
     const previousWebSocket: WebSocket | undefined = sessionWebSockets.get(sessionId);
     sessionWebSockets.set(sessionId, webSocket);
+    everRegisteredSessions.add(sessionId);
     console.log(`ToolApprovalStore: Registered session → WS (sessionId: ${sessionId})`.cyan);
 
     // registerSession also fires on every Claude system event (MCP init, status, etc.) for
@@ -251,4 +261,13 @@ function cleanupSession(sessionId: string): void {
     unregisterIdeOpenDiffHook(sessionId);
 }
 
-export {registerSession, unregisterSession, getSessionWebSocket, createApproval, resolveApproval, cleanupSession, registerIdeOpenDiffHook, addSessionAllowAll, initSessionAllowAll, getPendingApprovalMeta, setSessionProjectDir};
+/**
+ * Returns true if this session_id was ever registered as a Claude Lens session.
+ * Used by the tool-approval controller to distinguish Lens-spawned sessions from
+ * the main Claude Code instance running natively in a terminal or IDE.
+ */
+function wasSessionEverRegistered(sessionId: string): boolean {
+    return everRegisteredSessions.has(sessionId);
+}
+
+export {registerSession, unregisterSession, getSessionWebSocket, createApproval, resolveApproval, cleanupSession, registerIdeOpenDiffHook, addSessionAllowAll, initSessionAllowAll, getPendingApprovalMeta, setSessionProjectDir, wasSessionEverRegistered};

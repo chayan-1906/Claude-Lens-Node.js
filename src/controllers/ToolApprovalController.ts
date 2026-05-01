@@ -1,8 +1,8 @@
 import "colors";
 import crypto from "crypto";
 import {Request, Response} from "express";
-import {createApproval} from "../ws/toolApprovalStore";
 import {IToolApprovalDecision, IToolApprovalDetails} from "../types/ws";
+import {createApproval, wasSessionEverRegistered} from "../ws/toolApprovalStore";
 
 /**
  * POST /api/v1/tool-approval
@@ -13,14 +13,15 @@ import {IToolApprovalDecision, IToolApprovalDetails} from "../types/ws";
 const toolApprovalController = async (req: Request, res: Response) => {
     console.info('Controller: toolApprovalController started'.bgBlue.white.bold);
 
-    try {
-        const {session_id, tool_name, tool_input, tool_use_id} = req.body as {
-            session_id: string;
-            tool_name: string;
-            tool_input: Record<string, unknown>;
-            tool_use_id: string;
-        };
+    // Extract session_id before the try block so it remains accessible in the catch.
+    const {session_id, tool_name, tool_input, tool_use_id} = req.body as {
+        session_id: string;
+        tool_name: string;
+        tool_input: Record<string, unknown>;
+        tool_use_id: string;
+    };
 
+    try {
         if (!session_id || !tool_name || !tool_input) {
             console.warn('Controller: Missing required fields in tool-approval request'.yellow.bold);
             res.status(400).json({
@@ -54,11 +55,26 @@ const toolApprovalController = async (req: Request, res: Response) => {
         });
     } catch (error: unknown) {
         const message: string = error instanceof Error ? error.message : String(error);
-        console.log('Controller: toolApprovalController — no Claude Lens session, falling back to native prompt'.cyan, {reason: message});
 
-        // On error, fall back to "ask" so the native Claude Code terminal prompt appears.
-        // This handles: no WebSocket for the session (native terminal, not Claude Lens),
-        // approval timeout, session disconnected, etc.
+        // If this session_id was NEVER registered as a Claude Lens session, the hook fired
+        // from the main Claude Code instance (terminal/IDE), not from a Lens-spawned process.
+        // Return "allow" so the hook is a no-op and Claude Code proceeds normally.
+        // This prevents the "sensitive file" error that occurs when "ask" triggers Claude Code's
+        // native sensitive-file prompt in a context where no terminal is available.
+        if (!wasSessionEverRegistered(session_id)) {
+            console.log('Controller: toolApprovalController — unknown session (not a Lens session), allowing through'.cyan, {session_id, reason: message});
+            res.status(200).json({
+                hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'allow',
+                },
+            });
+            return;
+        }
+
+        // Known Lens session with a transient error (WS gone, timeout, disconnect).
+        // Fall back to "ask" so the native Claude Code terminal prompt appears.
+        console.log('Controller: toolApprovalController — Lens session error, falling back to native prompt'.cyan, {session_id, reason: message});
         res.status(200).json({
             hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
