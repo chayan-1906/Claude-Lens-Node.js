@@ -148,7 +148,7 @@ class SyncService {
         return validPaths;
     }
 
-    private static async bulkWriteInChunks<T>(model: { bulkWrite: (ops: T[], opts: { ordered: boolean; }; ) => Promise<unknown> }, ops: T[], chunkSize: number = 1000): Promise<void> {
+    private static async bulkWriteInChunks<T>(model: { bulkWrite: (ops: T[], opts: { ordered: boolean; }) => Promise<unknown> }, ops: T[], chunkSize: number = 1000): Promise<void> {
         for (let i = 0; i < ops.length; i += chunkSize) {
             await model.bulkWrite(ops.slice(i, i + chunkSize), {ordered: false});
         }
