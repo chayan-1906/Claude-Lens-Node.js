@@ -13,9 +13,9 @@ import ProjectModel from "../models/Project";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
-import {TRAILING_SLASHES_REGEX} from "../utils/constants";
 import {addToolToProjectAllowList} from "../permissions/allowList";
 import SessionLineModel, {ISessionLine} from "../models/SessionLine";
+import {CRLF_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
@@ -27,11 +27,11 @@ import {
     IAttachmentMeta,
     IEditSessionMessage,
     INewSessionMessage,
+    IPendingApprovalMeta,
     IProjectNotAvailableMessage,
     IResumeSessionMessage,
     ISendMessageMessage,
     ISwitchModelMessage,
-    IPendingApprovalMeta,
     IToolApprovalResponseMessage,
 } from "../types/ws";
 
@@ -205,14 +205,17 @@ function repairOrphanedToolUse(projectDirHash: string, sessionId: string): void 
 function readJsonlCwd(projectDirHash: string, sessionId: string): string | null {
     const claudeProjectsDir: string = path.join(process.env.HOME || '~', '.claude', 'projects');
     const jsonlPath: string = path.join(claudeProjectsDir, projectDirHash, `${sessionId}.jsonl`);
-    if (!fs.existsSync(jsonlPath)) return null;
+    if (!fs.existsSync(jsonlPath)) {
+        return null;
+    }
     try {
         const lines: string[] = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean);
         for (const line of lines) {
             const entry = JSON.parse(line) as Record<string, unknown>;
             if (typeof entry.cwd === 'string') return entry.cwd;
         }
-    } catch {}
+    } catch {
+    }
     return null;
 }
 
@@ -231,7 +234,9 @@ function patchJsonlCwd(projectDirHash: string, sessionId: string, newCwd: string
         const lines: string[] = raw.split('\n');
         let patchedCount: number = 0;
         const patched: string[] = lines.map((line: string) => {
-            if (!line.trim()) return line;
+            if (!line.trim()) {
+                return line;
+            }
             try {
                 const entry = JSON.parse(line) as Record<string, unknown>;
                 if (typeof entry.cwd === 'string' && entry.cwd !== newCwd) {
@@ -239,7 +244,8 @@ function patchJsonlCwd(projectDirHash: string, sessionId: string, newCwd: string
                     patchedCount++;
                     return JSON.stringify(entry);
                 }
-            } catch {}
+            } catch {
+            }
             return line;
         });
         if (patchedCount > 0) {
@@ -248,8 +254,8 @@ function patchJsonlCwd(projectDirHash: string, sessionId: string, newCwd: string
         } else {
             console.log('WebSocket: [CWD-PATCH] No lines needed patching'.gray);
         }
-    } catch (err: unknown) {
-        console.error(`WebSocket: [CWD-PATCH] Failed to patch JSONL cwd — ${err}`.red);
+    } catch (error: unknown) {
+        console.error(`WebSocket: [CWD-PATCH] Failed to patch JSONL cwd — ${error}`.red);
     }
 }
 
@@ -782,12 +788,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
 
         const triggerResultEventBackup = (): void => {
             if (activeSessionId) {
-                backupSessionJsonl(activeSessionId, 'result_event').catch(() => {});
+                backupSessionJsonl(activeSessionId, 'result_event').catch(() => {
+                });
             }
         }
 
-        /** Register session → WS mapping when system event provides the session_id.
-         *  Also triggers direct-write session upsert so messages can be saved immediately. */
+        /** Register session → WS mapping when system event provides the session_id. Also triggers direct-write session upsert so messages can be saved immediately */
         const onSystemEvent = (event: Record<string, unknown>): void => {
             // After IDE Apply: Claude writes its original content (overwriting user modifications).
             // When the tool_result arrives (user event), Claude is done writing — re-apply
@@ -799,8 +805,8 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     try {
                         fs.writeFileSync(pendingIdeOverwrite.filePath, pendingIdeOverwrite.content, 'utf-8');
                         console.log(`IdeService: Re-applied user's IDE modifications to ${pendingIdeOverwrite.filePath} (${pendingIdeOverwrite.content.length} chars)`.green.bold);
-                    } catch (err: unknown) {
-                        console.warn(`IdeService: Failed to re-apply IDE modifications — ${err}`.yellow);
+                    } catch (error: unknown) {
+                        console.warn(`IdeService: Failed to re-apply IDE modifications — ${error}`.yellow);
                     }
                     pendingIdeOverwrite = null;
                 }
@@ -848,13 +854,42 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         newContent = (toolInput.content as string) ?? '';
                     } else {
                         // Edit: apply old_string → new_string replacement on the current file
-                        const existing: string = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
+                        const fileExists: boolean = fs.existsSync(filePath);
+                        const existing: string = fileExists ? fs.readFileSync(filePath, 'utf-8') : '';
                         const oldStr: string = (toolInput.old_string as string) ?? '';
                         const newStr: string = (toolInput.new_string as string) ?? '';
                         const replaceAll: boolean = (toolInput.replace_all as boolean) ?? false;
-                        newContent = (replaceAll && oldStr)
-                            ? existing.split(oldStr).join(newStr)
-                            : existing.replace(oldStr, newStr);
+
+                        console.log(
+                            `IdeService: openDiff debug — fileExists=${fileExists}` +
+                            ` existingLen=${existing.length} existingHasCRLF=${existing.includes('\r\n')}` +
+                            ` oldStrLen=${oldStr.length} oldStrHasCRLF=${oldStr.includes('\r\n')}` +
+                            ` oldStrPreview=${JSON.stringify(oldStr.slice(0, 80))}`.gray,
+                        );
+
+                        const applyReplace = (src: string, search: string): string => (replaceAll && search) ? src.split(search).join(newStr) : src.replace(search, newStr);
+
+                        newContent = applyReplace(existing, oldStr);
+
+                        // Fallback: retry with CRLF-normalised strings when exact match fails
+                        if (newContent === existing && oldStr) {
+                            console.warn(
+                                `IdeService: openDiff — exact match failed for ${filePath}` +
+                                ` (existingHasCRLF=${existing.includes('\r\n')}, oldStrHasCRLF=${oldStr.includes('\r\n')})`.yellow,
+                            );
+                            const normalizedExisting: string = existing.replace(CRLF_REGEX, '\n');
+                            const normalizedOld: string = oldStr.replace(CRLF_REGEX, '\n');
+                            const normalizedResult: string = applyReplace(normalizedExisting, normalizedOld);
+                            if (normalizedResult !== normalizedExisting) {
+                                newContent = normalizedResult;
+                                console.warn(`IdeService: openDiff — CRLF-normalised fallback succeeded for ${filePath}`.yellow);
+                            } else {
+                                // old_string not found — file doesn't exist yet or content has already changed.
+                                // Skip openDiff: showing "Contents are identical" in IntelliJ is misleading.
+                                console.warn(`IdeService: openDiff — old_string not found in ${filePath}, skipping diff`.yellow);
+                                return;
+                            }
+                        }
                     }
 
                     console.log(`IdeService: Opening diff for ${filePath}`.cyan);
