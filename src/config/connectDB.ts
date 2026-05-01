@@ -61,7 +61,7 @@ async function connectDB(uri?: string): Promise<typeof mongoose | null> {
         const options = {
             maxPoolSize: 10,
             serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000,
+            socketTimeoutMS: 300000,
             maxIdleTimeMS: 30000,
             retryWrites: true,
         };

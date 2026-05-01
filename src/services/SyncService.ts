@@ -148,6 +148,12 @@ class SyncService {
         return validPaths;
     }
 
+    private static async bulkWriteInChunks<T>(model: { bulkWrite: (ops: T[], opts: { ordered: boolean; }; ) => Promise<unknown> }, ops: T[], chunkSize: number = 1000): Promise<void> {
+        for (let i = 0; i < ops.length; i += chunkSize) {
+            await model.bulkWrite(ops.slice(i, i + chunkSize), {ordered: false});
+        }
+    }
+
     /**
      * Sync a single JSONL file to MongoDB
      * Upserts session, incrementally inserts only new messages
@@ -199,32 +205,29 @@ class SyncService {
             },
         }));
         if (sessionLineOps.length > 0) {
-            await SessionLineModel.bulkWrite(sessionLineOps, {ordered: false});
+            await SyncService.bulkWriteInChunks(SessionLineModel, sessionLineOps);
         }
 
         const existingDocs = await MessageModel.find(
             {sessionInternalId},
             {uuid: 1, startLineIndex: 1},
         ).lean();
-        const existingUuids: Set<string> = new Set(
-            existingDocs.map((document) => document.uuid as string)
-        );
-
+        const existingUuids: Set<string> = new Set(existingDocs.map((document) => document.uuid as string));
         console.debug('DEBUG: Deduplication check'.cyan, {sessionId: parsedFile.sessionId, totalMessages: parsedFile.messages.length, existingUuids: existingUuids.size});
 
         const newMessages = parsedFile.messages
-            .filter((parsedMessage: IParsedMessage) => !existingUuids.has(parsedMessage.uuid))
-            .map((parsedMessage: IParsedMessage) => ({
-                uuid: parsedMessage.uuid,
-                parentUuid: parsedMessage.parentUuid,
-                startLineIndex: parsedMessage.startLineIndex,
+            .filter(({uuid}: IParsedMessage) => !existingUuids.has(uuid))
+            .map(({uuid, parentUuid, startLineIndex, role, content, aiModel, timestamp, tokenUsage, rawLines}: IParsedMessage) => ({
+                uuid,
+                parentUuid,
+                startLineIndex,
                 sessionInternalId,
-                role: parsedMessage.role,
-                content: parsedMessage.content,
-                aiModel: parsedMessage.aiModel,
-                timestamp: parsedMessage.timestamp,
-                tokenUsage: parsedMessage.tokenUsage,
-                rawLines: parsedMessage.rawLines,
+                role,
+                content,
+                aiModel,
+                timestamp,
+                tokenUsage,
+                rawLines,
             }));
 
         if (newMessages.length > 0) {
@@ -247,10 +250,7 @@ class SyncService {
                 }));
 
             if (startLineIndexBackfillOps.length > 0) {
-                const startLineIndexResult = await MessageModel.bulkWrite(startLineIndexBackfillOps);
-                if (startLineIndexResult.modifiedCount > 0) {
-                    console.log(`SyncService: [backfill] Backfilled startLineIndex for ${startLineIndexResult.modifiedCount} messages (session: ${parsedFile.sessionId})`.cyan);
-                }
+                await SyncService.bulkWriteInChunks(MessageModel, startLineIndexBackfillOps);
             }
 
             const backfillOps = parsedFile.messages
@@ -265,10 +265,7 @@ class SyncService {
                 }));
 
             if (backfillOps.length > 0) {
-                const backfillResult = await MessageModel.bulkWrite(backfillOps);
-                if (backfillResult.modifiedCount > 0) {
-                    console.log(`SyncService: [backfill] Updated parentUuid for ${backfillResult.modifiedCount} direct-write messages (session: ${parsedFile.sessionId})`.cyan);
-                }
+                await SyncService.bulkWriteInChunks(MessageModel, backfillOps);
             }
 
             // Backfill rawLines for existing messages that don't have them yet
@@ -284,10 +281,7 @@ class SyncService {
                 }));
 
             if (rawLinesBackfillOps.length > 0) {
-                const rawLinesResult = await MessageModel.bulkWrite(rawLinesBackfillOps);
-                if (rawLinesResult.modifiedCount > 0) {
-                    console.log(`SyncService: [backfill] Backfilled rawLines for ${rawLinesResult.modifiedCount} messages (session: ${parsedFile.sessionId})`.cyan);
-                }
+                await SyncService.bulkWriteInChunks(MessageModel, rawLinesBackfillOps);
             }
         }
 
