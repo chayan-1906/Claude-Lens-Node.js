@@ -746,25 +746,43 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         let lastWrittenUuid: string | null = null;
         let pendingAttachmentMeta: IAttachmentMeta[] | null = null;
 
-        // --- JSONL backup state: debounce, size threshold tracking, idle timer ---
+        // --- JSONL backup state: debounce, size threshold tracking, idle timer, upload serialization ---
         let lastBackupTimestamp: number = 0;
         let lastSizeThreshold: number = 0;
         let idleBackupTimer: ReturnType<typeof setTimeout> | null = null;
+        let backupInFlight: boolean = false;
+        let backupNeededAfterInflight: { sessionId: string; reason: string; } | null = null;
 
         /**
          * Best-effort JSONL backup to R2 — reads local JSONL file, uploads, respects 30s debounce.
+         * Serialized: only one upload runs at a time. If a second backup is requested while one is in
+         * flight, it is queued and executed immediately after the current upload completes (bypassing
+         * the debounce, since new data was written during the in-flight upload).
          * Async + non-blocking: callers fire-and-forget (catch errors internally).
          */
-        const backupSessionJsonl = async (sessionId: string, reason: string): Promise<void> => {
+        const backupSessionJsonl = async (sessionId: string, reason: string, bypassDebounce: boolean = false): Promise<void> => {
             const now: number = Date.now();
-            if (now - lastBackupTimestamp < 30_000) {
+            if (!bypassDebounce && now - lastBackupTimestamp < 30_000) {
                 console.log(`R2: Skipping JSONL backup (debounce) — ${reason}`.cyan);
                 return;
             }
-            if (!activeProjectDir) return;
+            if (!activeProjectDir) {
+                return;
+            }
+
+            if (backupInFlight) {
+                backupNeededAfterInflight = {sessionId, reason};
+                console.log(`R2: JSONL backup queued (upload in flight) — ${reason}`.cyan);
+                return;
+            }
+
             const hash: string = toProjectDirHash(activeProjectDir);
             const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${sessionId}.jsonl`);
-            if (!fs.existsSync(jsonlPath)) return;
+            if (!fs.existsSync(jsonlPath)) {
+                return;
+            }
+
+            backupInFlight = true;
             try {
                 const content: Buffer = fs.readFileSync(jsonlPath);
                 await uploadJsonlBackup(sessionId, content);
@@ -772,13 +790,24 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 console.log(`R2: JSONL backup complete — trigger: ${reason}`.green);
             } catch (error: unknown) {
                 console.warn(`R2: JSONL backup failed — ${reason}: ${error}`.yellow);
+            } finally {
+                backupInFlight = false;
+                if (backupNeededAfterInflight) {
+                    const {sessionId: pendSid, reason: pendReason} = backupNeededAfterInflight;
+                    backupNeededAfterInflight = null;
+                    backupSessionJsonl(pendSid, `${pendReason}_deferred`, true).catch(() => {});
+                }
             }
         }
 
         /** Reset the idle backup timer — fires once after 5 minutes of no user messages */
         const resetIdleBackupTimer = (): void => {
-            if (idleBackupTimer) clearTimeout(idleBackupTimer);
-            if (!activeSessionId) return;
+            if (idleBackupTimer) {
+                clearTimeout(idleBackupTimer);
+            }
+            if (!activeSessionId) {
+                return;
+            }
             const sid: string = activeSessionId;
             idleBackupTimer = setTimeout(() => {
                 idleBackupTimer = null;

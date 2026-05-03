@@ -1,4 +1,5 @@
 import "colors";
+import zlib from 'zlib';
 import convert from "heic-convert";
 import {IR2Config} from "../types/setup";
 import {getR2Config} from "./localConfig";
@@ -110,7 +111,7 @@ async function deleteAttachmentsByUrls(urls: string[]): Promise<number> {
     if (!client) return 0;
 
     const prefix: string = config.publicUrl + '/';
-    const keys: { Key: string }[] = urls
+    const keys: { Key: string; }[] = urls
         .filter((url: string) => url.startsWith(prefix))
         .map((url: string) => ({Key: url.substring(prefix.length)}));
 
@@ -208,18 +209,21 @@ async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffe
     const client: S3Client | null = getR2Client();
     if (!client) return null;
     try {
+        const raw: Buffer = Buffer.isBuffer(jsonlContent) ? jsonlContent : Buffer.from(jsonlContent);
+        const compressedJsonl: Buffer = zlib.gzipSync(raw);
         const key: string = `${sessionId}/${sessionId}.jsonl`;
         await client.send(new PutObjectCommand({
             Bucket: config.bucketName,
             Key: key,
-            Body: jsonlContent,
+            Body: compressedJsonl,
             ContentType: 'application/x-ndjson',
+            ContentEncoding: 'gzip',
         }));
         const url: string = `${config.publicUrl}/${key}`;
-        console.log(`R2: JSONL backup uploaded — ${sessionId} (${(Buffer.byteLength(jsonlContent) / 1024).toFixed(1)} KB)`.green);
+        console.log(`R2: JSONL backup uploaded — ${sessionId} (${(raw.length / 1024).toFixed(1)} KB → ${(compressedJsonl.length / 1024).toFixed(1)} KB gzipped)`.green);
         return url;
-    } catch (err: unknown) {
-        console.warn(`R2: JSONL backup upload failed — ${err}`.yellow);
+    } catch (error: unknown) {
+        console.warn(`R2: JSONL backup upload failed — ${error}`.yellow);
         return null;
     }
 }
@@ -230,15 +234,26 @@ async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffe
  */
 async function downloadJsonlBackup(sessionId: string): Promise<string | null> {
     const config: IR2Config | null = getR2Config();
-    if (!config) return null;
+    if (!config) {
+        return null;
+    }
     const client: S3Client | null = getR2Client();
-    if (!client) return null;
+    if (!client) {
+        return null;
+    }
     try {
         const key: string = `${sessionId}/${sessionId}.jsonl`;
         const resp = await client.send(new GetObjectCommand({
             Bucket: config.bucketName,
             Key: key,
         }));
+        if (resp.ContentEncoding === 'gzip') {
+            const bytes: Uint8Array | undefined = await resp.Body?.transformToByteArray();
+            if (!bytes) {
+                return null;
+            }
+            return zlib.gunzipSync(Buffer.from(bytes)).toString('utf-8');
+        }
         return await resp.Body?.transformToString() ?? null;
     } catch {
         return null;
