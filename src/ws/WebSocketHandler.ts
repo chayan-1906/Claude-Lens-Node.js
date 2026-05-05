@@ -13,6 +13,7 @@ import ProjectModel from "../models/Project";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
 import MessageModel, {IMessage} from "../models/Message";
+import * as pendingAttachments from "../utils/pendingAttachments";
 import {addToolToProjectAllowList} from "../permissions/allowList";
 import SessionLineModel, {ISessionLine} from "../models/SessionLine";
 import {CRLF_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
@@ -744,7 +745,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         // --- Direct-write state: write messages to MongoDB as they stream ---
         let directWriteSessionOid: Types.ObjectId | null = null;
         let lastWrittenUuid: string | null = null;
-        let pendingAttachmentMeta: IAttachmentMeta[] | null = null;
+        // Holds attachment metadata uploaded for a new_session before its real
+        // sessionId arrives via the system event. Pushed to the per-session
+        // queue (and cleared) inside onSystemEvent. resume_session/send_message
+        // know the sessionId up front and push directly without staging here.
+        let stagedNewSessionAttachmentMeta: IAttachmentMeta[] | null = null;
 
         // --- JSONL backup state: debounce, size threshold tracking, idle timer, upload serialization ---
         let lastBackupTimestamp: number = 0;
@@ -850,6 +855,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 // Also strip trailing slashes for consistency with the eager-assignment path.
                 if (event.cwd) {
                     activeProjectDir = (event.cwd as string).replace(TRAILING_SLASHES_REGEX, '');
+                }
+                // Drain any new_session attachment metadata staged before the
+                // real sessionId was known. The system event arrives on every
+                // session start; the staged value is per-spawn, so this only
+                // fires once per new_session with attachments.
+                if (stagedNewSessionAttachmentMeta) {
+                    pendingAttachments.push(activeSessionId, stagedNewSessionAttachmentMeta);
+                    console.log(`WebSocket: pendingAttachments queued ${stagedNewSessionAttachmentMeta.length} item(s) for new_session ${activeSessionId}`.cyan);
+                    stagedNewSessionAttachmentMeta = null;
                 }
                 registerSession(activeSessionId, webSocket);
                 setSessionProjectDir(activeSessionId, activeProjectDir);
@@ -1020,11 +1034,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             const parentUuid: string | undefined = lastWrittenUuid ?? undefined;
             lastWrittenUuid = uuid;
 
-            // Consume pending attachment metadata for user messages (set by new_session/resume_session/send_message)
-            const attachments: IAttachmentMeta[] | undefined = (role === 'user' && pendingAttachmentMeta) ? pendingAttachmentMeta : undefined;
-            if (role === 'user' && pendingAttachmentMeta) {
-                pendingAttachmentMeta = null;
-            }
+            // Attachments are NOT attributed here — Claude CLI does not echo the
+            // human-typed user message on stream-json stdout (only writes it to
+            // JSONL). The first `role: 'user'` event seen here is always a
+            // synthetic tool_result, which would be the wrong message to stamp.
+            // Attribution happens in SyncService.syncFile after the JSONL sync
+            // inserts the authoritative human user message.
 
             // Extract raw lines attached by claudeSpawner (_rawLines is not part of the protocol —
             // it's an internal field added before calling onMessage for lossless restore support)
@@ -1042,10 +1057,9 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     thinking: role === 'assistant' ? (activeThinking ?? undefined) : undefined,
                     timestamp: new Date(),
                     tokenUsage,
-                    ...(attachments ? {attachments} : {}),
                     ...(rawLines && rawLines.length > 0 ? {rawLines} : {}),
                 });
-                console.log(`WebSocket: [direct-write] Saved ${role} message (uuid: ${uuid})${attachments ? ` with ${attachments.length} attachment(s)` : ''}`.green);
+                console.log(`WebSocket: [direct-write] Saved ${role} message (uuid: ${uuid})`.green);
             } catch (error: unknown) {
                 // E11000 duplicate key error = message already exists (e.g. from a prior sync) — safe to ignore
                 if (error instanceof Error && error.message.includes('E11000')) {
@@ -1372,7 +1386,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         try {
                             const result = await buildContentBlocks(clientMessage.attachments, r2SessionId, clientMessage.text);
                             firstMsgContentBlocks = result.blocks;
-                            pendingAttachmentMeta = result.attachmentMeta;
+                            // Queue the metadata so SyncService can attribute it to the human user
+                            // message after JSONL sync. resume_session has the real sessionId now;
+                            // new_session must wait for the system event to learn its real id.
+                            if (clientMessage.type === 'resume_session') {
+                                pendingAttachments.push(clientMessage.sessionId, result.attachmentMeta);
+                            } else {
+                                stagedNewSessionAttachmentMeta = result.attachmentMeta;
+                            }
                         } catch (uploadError: unknown) {
                             sendError(webSocket, `Failed to upload attachments: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
                             break;
@@ -1623,7 +1644,7 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         console.log(`WebSocket: send_message with ${sendMsg.attachments!.length} attachment(s) — uploading to R2`.cyan);
                         try {
                             const result = await buildContentBlocks(sendMsg.attachments!, activeSessionId, sendMsg.text);
-                            pendingAttachmentMeta = result.attachmentMeta;
+                            pendingAttachments.push(activeSessionId, result.attachmentMeta);
                             sendMessage(claudeProcess, sendMsg.text, result.blocks);
                         } catch (uploadError: unknown) {
                             sendError(webSocket, `Failed to upload attachments: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);

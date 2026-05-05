@@ -4,11 +4,14 @@ import path from "path";
 import {Types} from "mongoose";
 import TaskModel from "../models/Task";
 import MemoryModel from "../models/Memory";
+import {IAttachmentMeta} from "../types/ws";
 import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
 import SessionLineModel from "../models/SessionLine";
 import {findJsonlFiles} from "../utils/findJsonlFiles";
 import {parseJsonlFile} from "../utils/parseJsonlFile";
+import * as pendingAttachments from "../utils/pendingAttachments";
+import {isHumanAttachmentMessage} from "../utils/attachmentPredicate";
 import {CLAUDE_PROJECTS_DIR, CLAUDE_TASKS_DIR, NON_ALPHANUMERIC_REGEX} from "../utils/constants";
 import {resolveCanonicalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {ALL_SYNC_TARGETS, IParsedFile, IParsedMessage, IParsedSessionLine, ISyncMemoriesResponse, ISyncParams, ISyncResponse, ISyncTasksResponse, RawTask, SyncTarget} from "../types/sync";
@@ -232,6 +235,33 @@ class SyncService {
 
         if (newMessages.length > 0) {
             await MessageModel.insertMany(newMessages, {ordered: false});
+        }
+
+        // Attribute pending attachment batches to the human user messages just inserted.
+        // The WebSocket handler queues a batch each time a user submits a message with
+        // attachments; here we pop one batch per qualifying user message in timestamp
+        // order. See utils/pendingAttachments.ts and utils/attachmentPredicate.ts.
+        if (newMessages.length > 0 && pendingAttachments.size(parsedFile.sessionId) > 0) {
+            const candidates = newMessages
+                .filter((message) => isHumanAttachmentMessage({role: message.role, content: message.content}))
+                .sort((messageI, messageII) => messageI.timestamp.getTime() - messageII.timestamp.getTime());
+
+            const attachmentOps = [];
+            for (const candidate of candidates) {
+                const batch: IAttachmentMeta[] | null = pendingAttachments.shift(parsedFile.sessionId);
+                if (!batch) break;
+                attachmentOps.push({
+                    updateOne: {
+                        filter: {uuid: candidate.uuid, $or: [{attachments: {$exists: false}}, {attachments: {$size: 0}}]},
+                        update: {$set: {attachments: batch}},
+                    },
+                });
+            }
+
+            if (attachmentOps.length > 0) {
+                await SyncService.bulkWriteInChunks(MessageModel, attachmentOps);
+                console.log(`Sync: Attributed ${attachmentOps.length} attachment batch(es) to user messages in session ${parsedFile.sessionId}`.green);
+            }
         }
 
         // Backfill parentUuid and rawLines for messages written by direct-write (live WebSocket sessions).
