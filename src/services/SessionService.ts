@@ -9,9 +9,11 @@ import {getR2Config} from "../utils/localConfig";
 import SessionLineModel from "../models/SessionLine";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import SessionModel, {ISession} from "../models/Session";
+import {appendCustomTitleLine} from "../utils/customTitle";
 import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 import MessageModel, {ContentBlock, IMessage} from "../models/Message";
-import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+import {resolveLocalPath, toProjectDirHash} from "../utils/resolveProjectDir";
+import {generateFailureCode, generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionPagination, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse, IUpdateSessionParams, IUpdateSessionResponse} from "../types/session";
 
 class SessionService {
@@ -128,8 +130,40 @@ class SessionService {
                 console.debug('DEBUG: Title exceeds 100 characters, returning error'.cyan);
                 return {error: generateInvalidCode('title')};
             }
-            session.title = title.trim();
-            session.titleRenamed = true;
+
+            const trimmedTitle: string = title.trim();
+
+            // Idempotent: skip JSONL + DB write when title is unchanged — avoids
+            // polluting the JSONL with redundant custom-title lines.
+            if (trimmedTitle !== session.title) {
+                // Resolve local JSONL path. If the file exists locally and the rawProjectDir
+                // resolves on this machine, mirror the rename into the JSONL — same effect
+                // as Claude CLI's /rename. For historical / cross-machine sessions, the JSONL
+                // isn't reachable; we update MongoDB only.
+                const localRawProjectDir: string = resolveLocalPath(session.rawProjectDir);
+                const localProjectDirHash: string = toProjectDirHash(localRawProjectDir);
+                const jsonlPath: string = path.join(CLAUDE_PROJECTS_DIR, localProjectDirHash, `${session.sessionId}.jsonl`);
+                const isLocallyAddressable: boolean = fs.existsSync(jsonlPath);
+
+                if (isLocallyAddressable) {
+                    try {
+                        appendCustomTitleLine({
+                            projectDirHash: localProjectDirHash,
+                            sessionId: session.sessionId,
+                            rawProjectDir: localRawProjectDir,
+                            customTitle: trimmedTitle,
+                        });
+                    } catch (error: unknown) {
+                        console.error('Service: appendCustomTitleLine failed, leaving MongoDB unchanged'.red.bold, {sessionId, error: (error as Error).message});
+                        return {error: generateFailureCode('jsonl_write')};
+                    }
+                } else {
+                    console.log('Service: JSONL not locally addressable — historical session, MongoDB-only rename'.cyan, {sessionId});
+                }
+
+                session.title = trimmedTitle;
+                session.titleRenamed = true;
+            }
         }
 
         if (description !== undefined) {

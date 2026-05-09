@@ -6,8 +6,8 @@ import {ApiResponse} from "../utils/ApiResponse";
 import {ESessionSource} from "../models/Session";
 import SessionService from "../services/SessionService";
 import {resolveLocalPath, toProjectDirHash} from "../utils/resolveProjectDir";
-import {generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteSessionParams, IGetSessionParams, IStubMessagesParams, IUpdateSessionParams} from "../types/session";
+import {generateFailureCode, generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 
 const VALID_SOURCES: string[] = Object.values(ESessionSource);
 
@@ -140,6 +140,9 @@ const updateSessionController = async (req: Request, res: Response) => {
             } else if (error === generateNotFoundCode('session')) {
                 statusCode = 404;
                 errorMsg = `No session found with sessionId: ${sessionId}!`;
+            } else if (error === generateFailureCode('jsonl_write')) {
+                statusCode = 500;
+                errorMsg = `Couldn't sync rename to the session file. Please try again!`;
             }
 
             res.status(statusCode).send(new ApiResponse({

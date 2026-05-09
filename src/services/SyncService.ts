@@ -166,20 +166,17 @@ class SyncService {
         const canonicalRaw: string = resolveCanonicalPath(parsedFile.rawProjectDir);
         const canonicalHash: string = toProjectDirHash(canonicalRaw);
 
-        // Check if the session already has a user-renamed title — don't overwrite it
-        const existingSession = await SessionModel.findOne({sessionId: parsedFile.sessionId}, {titleRenamed: 1}).lean();
-
+        // Always sync title from JSONL. Web UI renames now write a custom-title line
+        // before updating MongoDB, so JSONL is the authoritative source — last-write-wins
+        // across both interfaces (CLI /rename and Web UI rename).
         const updateFields: Record<string, unknown> = {
+            title: parsedFile.title,
             aiModel: parsedFile.aiModel,
             projectDir: canonicalHash,
             rawProjectDir: canonicalRaw,
             gitBranch: parsedFile.gitBranch,
             slug: parsedFile.slug,
         };
-        // Only overwrite title if the user hasn't explicitly renamed it
-        if (!existingSession?.titleRenamed) {
-            updateFields.title = parsedFile.title;
-        }
         // Only set contextTokensUsed when > 0 — avoids overwriting valid values
         // with zeros from rejected API calls (e.g. "Prompt is too long")
         if (parsedFile.contextTokensUsed && parsedFile.contextTokensUsed > 0) {
