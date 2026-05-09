@@ -170,4 +170,38 @@ function appendCustomTitleLine({projectDirHash, sessionId, rawProjectDir, custom
     console.log('Util: appendCustomTitleLine succeeded'.cyan, {sessionId, customTitle, uuid: generatedUuid});
 }
 
-export {appendCustomTitleLine};
+/**
+ * In-memory equivalent of appendCustomTitleLine for R2-backed sessions.
+ * Takes the raw JSONL content string, verifies the session identity, appends
+ * custom-title + agent-name lines, and returns the updated content — ready to
+ * re-upload to R2. Never touches disk.
+ *
+ * Throws if the content has no parseable first line or the sessionId mismatches.
+ */
+function appendCustomTitleLineToContent(content: string, sessionId: string, customTitle: string, rawProjectDir: string): string {
+    console.log('Util: appendCustomTitleLineToContent called'.cyan.italic, {sessionId, customTitle});
+
+    const firstParsed: Record<string, unknown> | null = parseFirstJsonLine(content);
+    if (!firstParsed) {
+        throw new Error(`appendCustomTitleLineToContent: no parseable line in R2 JSONL content for session ${sessionId}`);
+    }
+    if (firstParsed.sessionId !== sessionId) {
+        throw new Error(`appendCustomTitleLineToContent: identity mismatch — content's first line says sessionId=${String(firstParsed.sessionId)}, expected ${sessionId}`);
+    }
+
+    const generatedUuid: string = randomUUID();
+    const payload: ICustomTitleLine = {
+        type: 'custom-title',
+        customTitle,
+        sessionId,
+        uuid: generatedUuid,
+        timestamp: new Date().toISOString(),
+        cwd: rawProjectDir,
+    };
+    const agentNamePayload: IAgentNameLine = {type: 'agent-name', agentName: customTitle, sessionId};
+
+    console.log('Util: appendCustomTitleLineToContent succeeded'.cyan, {sessionId, customTitle, uuid: generatedUuid});
+    return content + `\n${JSON.stringify(payload)}\n${JSON.stringify(agentNamePayload)}\n`;
+}
+
+export {appendCustomTitleLine, appendCustomTitleLineToContent};

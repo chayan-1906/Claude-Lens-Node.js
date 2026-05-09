@@ -4,15 +4,16 @@ import path from "path";
 import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IR2Config} from "../types/setup";
+import MemoryModel from "../models/Memory";
 import ProjectModel from "../models/Project";
 import {getR2Config} from "../utils/localConfig";
 import SessionLineModel from "../models/SessionLine";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import SessionModel, {ISession} from "../models/Session";
-import {appendCustomTitleLine} from "../utils/customTitle";
-import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 import MessageModel, {ContentBlock, IMessage} from "../models/Message";
-import {resolveLocalPath, toProjectDirHash} from "../utils/resolveProjectDir";
+import {appendCustomTitleLine, appendCustomTitleLineToContent} from "../utils/customTitle";
+import {resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
+import {deleteAttachmentsByUrls, downloadJsonlBackup, isR2Configured, uploadJsonlBackup} from "../utils/r2";
 import {generateFailureCode, generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteSessionParams, IDeleteSessionResponse, IGetAllSessionsParams, IGetAllSessionsResponse, IGetSessionPagination, IGetSessionResponse, IPagination, IStubMessagesParams, IStubMessagesResponse, IUpdateSessionParams, IUpdateSessionResponse} from "../types/session";
 
@@ -157,8 +158,79 @@ class SessionService {
                         console.error('Service: appendCustomTitleLine failed, leaving MongoDB unchanged'.red.bold, {sessionId, error: (error as Error).message});
                         return {error: generateFailureCode('jsonl_write')};
                     }
+                } else if (isR2Configured()) {
+                    // JSONL not local — try R2 backup, same path as session resume
+                    const r2Content: string | null = await downloadJsonlBackup(session.sessionId);
+                    if (r2Content) {
+                        try {
+                            const updatedContent: string = appendCustomTitleLineToContent(r2Content, session.sessionId, trimmedTitle, localRawProjectDir);
+                            const uploaded: string | null = await uploadJsonlBackup(session.sessionId, updatedContent);
+                            if (!uploaded) {
+                                console.error('Service: R2 JSONL re-upload failed, leaving MongoDB unchanged'.red.bold, {sessionId});
+                                return {error: generateFailureCode('jsonl_write')};
+                            }
+                            // Also restore to local disk so CLI can read the rename on next resume —
+                            // mirrors the R2 restore + memory reconstruction done by resume_session.
+                            fs.mkdirSync(path.join(CLAUDE_PROJECTS_DIR, localProjectDirHash), {recursive: true});
+                            fs.writeFileSync(jsonlPath, updatedContent);
+                            console.log('Service: custom-title written to R2 and local JSONL'.cyan, {sessionId, jsonlPath});
+
+                            // Reconstruct memory files (same as reconstructAndSaveMemory in WebSocketHandler)
+                            const memoryDir: string = path.join(CLAUDE_PROJECTS_DIR, localProjectDirHash, 'memory');
+                            const canonicalHash: string = resolveProjectDirHash(localProjectDirHash);
+                            const memories = await MemoryModel.find({projectDir: canonicalHash});
+                            if (memories.length > 0) {
+                                fs.mkdirSync(memoryDir, {recursive: true});
+                                let writtenCount: number = 0;
+                                for (const memory of memories) {
+                                    const markerIndex: number = memory.filePath.lastIndexOf('/memory/');
+                                    const relPath: string = markerIndex >= 0
+                                        ? memory.filePath.substring(markerIndex + '/memory/'.length)
+                                        : path.basename(memory.filePath);
+                                    const outputPath: string = path.join(memoryDir, relPath);
+                                    if (fs.existsSync(outputPath)) continue;
+                                    fs.mkdirSync(path.dirname(outputPath), {recursive: true});
+                                    fs.writeFileSync(outputPath, memory.content, 'utf-8');
+                                    writtenCount++;
+                                }
+                                if (writtenCount > 0) {
+                                    console.log('Service: Reconstructed memory files'.cyan, {writtenCount, total: memories.length, memoryDir});
+                                }
+                            }
+
+                            // Reconstruct tasks (same as reconstructAndSaveTasks in WebSocketHandler)
+                            const tasksDir: string = path.join(process.env.HOME || '~', '.claude', 'tasks', session.sessionId);
+                            const existingTasks: string[] = fs.existsSync(tasksDir)
+                                ? fs.readdirSync(tasksDir).filter((name: string) => name.endsWith('.json'))
+                                : [];
+                            if (existingTasks.length === 0) {
+                                const tasks = await TaskModel.find({sessionId: session.sessionId});
+                                if (tasks.length > 0) {
+                                    fs.mkdirSync(tasksDir, {recursive: true});
+                                    for (const task of tasks) {
+                                        const rawTask = {
+                                            id: task.taskId,
+                                            subject: task.subject,
+                                            description: task.description,
+                                            ...(task.activeForm ? {activeForm: task.activeForm} : {}),
+                                            status: task.status,
+                                            blocks: task.blocks ?? [],
+                                            blockedBy: task.blockedBy ?? [],
+                                        };
+                                        fs.writeFileSync(path.join(tasksDir, `${task.taskId}.json`), JSON.stringify(rawTask, null, 2), 'utf-8');
+                                    }
+                                    console.log('Service: Reconstructed tasks'.cyan, {count: tasks.length, tasksDir});
+                                }
+                            }
+                        } catch (error: unknown) {
+                            console.error('Service: appendCustomTitleLineToContent failed, leaving MongoDB unchanged'.red.bold, {sessionId, error: (error as Error).message});
+                            return {error: generateFailureCode('jsonl_write')};
+                        }
+                    } else {
+                        console.log('Service: No R2 backup found — MongoDB-only rename'.cyan, {sessionId});
+                    }
                 } else {
-                    console.log('Service: JSONL not locally addressable — historical session, MongoDB-only rename'.cyan, {sessionId});
+                    console.log('Service: JSONL not locally addressable and R2 not configured — MongoDB-only rename'.cyan, {sessionId});
                 }
 
                 session.title = trimmedTitle;
