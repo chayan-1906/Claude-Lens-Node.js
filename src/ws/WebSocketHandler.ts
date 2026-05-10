@@ -767,16 +767,20 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
          */
         const backupSessionJsonl = async (sessionId: string, reason: string, bypassDebounce: boolean = false): Promise<void> => {
             const now: number = Date.now();
+            console.log(`DIAGNOSTIC: backupSessionJsonl called sessionId=${sessionId} reason=${reason} bypassDebounce=${bypassDebounce} msSinceLastBackup=${lastBackupTimestamp ? now - lastBackupTimestamp : 'first'}`.bgMagenta.white.bold);
             if (!bypassDebounce && now - lastBackupTimestamp < 30_000) {
+                console.log(`DIAGNOSTIC: backupSessionJsonl SKIPPED reason=${reason} cause=debounce`.bgMagenta.white.bold);
                 console.log(`R2: Skipping JSONL backup (debounce) — ${reason}`.cyan);
                 return;
             }
             if (!activeProjectDir) {
+                console.log(`DIAGNOSTIC: backupSessionJsonl SKIPPED reason=${reason} cause=no_activeProjectDir`.bgMagenta.white.bold);
                 return;
             }
 
             if (backupInFlight) {
                 backupNeededAfterInflight = {sessionId, reason};
+                console.log(`DIAGNOSTIC: backupSessionJsonl QUEUED reason=${reason} cause=in_flight`.bgMagenta.white.bold);
                 console.log(`R2: JSONL backup queued (upload in flight) — ${reason}`.cyan);
                 return;
             }
@@ -784,12 +788,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
             const hash: string = toProjectDirHash(activeProjectDir);
             const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${sessionId}.jsonl`);
             if (!fs.existsSync(jsonlPath)) {
+                console.log(`DIAGNOSTIC: backupSessionJsonl SKIPPED reason=${reason} cause=no_disk_file path=${jsonlPath}`.bgMagenta.white.bold);
                 return;
             }
 
             backupInFlight = true;
             try {
                 const content: Buffer = fs.readFileSync(jsonlPath);
+                const lineCount: number = content.toString('utf-8').split('\n').filter((line: string) => line.trim().length > 0).length;
+                console.log(`DIAGNOSTIC: backupSessionJsonl READING DISK reason=${reason} sessionId=${sessionId} bytes=${content.length} nonEmptyLines=${lineCount} path=${jsonlPath}`.bgMagenta.white.bold);
                 await uploadJsonlBackup(sessionId, content);
                 lastBackupTimestamp = Date.now();
                 console.log(`R2: JSONL backup complete — trigger: ${reason}`.green);
@@ -1157,6 +1164,24 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
          *  so it can refetch the session with the full data (including the
          *  human-typed user message that only exists in the JSONL file). */
         const autoSyncWebUI = async (): Promise<void> => {
+            // DIAGNOSTIC: snapshot disk JSONL line count at the moment sync starts
+            // (compare against the line count seen by the immediate result_event backup
+            // to prove/disprove the flush-gap hypothesis).
+            if (activeSessionId && activeProjectDir) {
+                try {
+                    const hash: string = toProjectDirHash(activeProjectDir);
+                    const jsonlPath: string = path.join(process.env.HOME || '~', '.claude', 'projects', hash, `${activeSessionId}.jsonl`);
+                    if (fs.existsSync(jsonlPath)) {
+                        const content: string = fs.readFileSync(jsonlPath, 'utf-8');
+                        const lineCount: number = content.split('\n').filter((line: string) => line.trim().length > 0).length;
+                        console.log(`DIAGNOSTIC: autoSyncWebUI disk snapshot sessionId=${activeSessionId} bytes=${content.length} nonEmptyLines=${lineCount}`.bgMagenta.white.bold);
+                    } else {
+                        console.log(`DIAGNOSTIC: autoSyncWebUI disk snapshot sessionId=${activeSessionId} status=file_missing path=${jsonlPath}`.bgMagenta.white.bold);
+                    }
+                } catch (error: unknown) {
+                    console.log(`DIAGNOSTIC: autoSyncWebUI disk snapshot error=${error instanceof Error ? error.message : String(error)}`.bgMagenta.white.bold);
+                }
+            }
             await autoSync(activeProjectDir);
             if (activeSessionId) {
                 try {
@@ -1423,7 +1448,6 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         // Also persist AFTER sync for new sessions (sync creates the session first).
                         // Both calls are safe: zero-guard skips rejected results, $set is idempotent.
                         persistResultContext(resultEvent);
-                        triggerResultEventBackup();
 
                         // Trigger #3: size threshold backup (every 5MB boundary crossed)
                         if (activeSessionId && activeProjectDir) {
@@ -1440,9 +1464,18 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             }
                         }
 
+                        // R2 backup runs AFTER the 3s scheduleSync window so Claude has
+                        // finished flushing assistant content to the JSONL file. Doing it
+                        // immediately on the result event captures a truncated file
+                        // (the result event is emitted before JSONL writes complete).
+                        // bypassDebounce=true: post-sync content is authoritative, must
+                        // overwrite any earlier debounced upload.
                         scheduleSync(async (): Promise<void> => {
                             await autoSyncWebUI();
                             await persistResultContext(resultEvent);
+                            if (activeSessionId) {
+                                await backupSessionJsonl(activeSessionId, 'after_sync', true);
+                            }
                         });
                     }, onSystemEvent, undefined, undefined, directWriteMessage, firstMsgContentBlocks);
 
@@ -1459,7 +1492,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         // Flush: cancel any pending result-event sync and run immediately.
                         // On exit all JSONL writes are guaranteed complete — this is the
                         // authoritative sync that captures the final state.
-                        flushSync(autoSyncWebUI);
+                        // R2 backup runs after sync so the final, complete JSONL replaces
+                        // any earlier debounced/in-flight upload (bypassDebounce=true).
+                        flushSync(async (): Promise<void> => {
+                            await autoSyncWebUI();
+                            if (activeSessionId) {
+                                await backupSessionJsonl(activeSessionId, 'after_exit_sync', true);
+                            }
+                        });
 
                         claudeProcess = null;
                     });
@@ -1576,7 +1616,6 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     console.log(`WebSocket: edit_session — spawning fresh session (cwd: ${spawnMsg.projectDir}, contextUserCount: ${contextUserCount})`.cyan);
                     claudeProcess = spawnClaude(spawnMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
-                        triggerResultEventBackup();
 
                         // Trigger #3: size threshold backup (every 5MB boundary crossed)
                         if (activeSessionId && activeProjectDir) {
@@ -1593,9 +1632,13 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             }
                         }
 
+                        // R2 backup runs AFTER sync — see new_session handler for rationale.
                         scheduleSync(async (): Promise<void> => {
                             await afterEditSync();
                             await persistResultContext(resultEvent);
+                            if (activeSessionId) {
+                                await backupSessionJsonl(activeSessionId, 'after_sync', true);
+                            }
                         });
                     }, captureSessionId, contextNdjson, contextUserCount, directWriteMessage);
 
@@ -1607,7 +1650,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         if (webSocket.readyState === WebSocket.OPEN) {
                             webSocket.send(JSON.stringify({type: 'process_exit', code}));
                         }
-                        flushSync(afterEditSync);
+                        flushSync(async (): Promise<void> => {
+                            await afterEditSync();
+                            if (activeSessionId) {
+                                await backupSessionJsonl(activeSessionId, 'after_exit_sync', true);
+                            }
+                        });
                         claudeProcess = null;
                     });
 
@@ -1725,7 +1773,6 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     console.log(`WebSocket: [TRACE] Eagerly registered session WS before switch spawn (sessionId: ${resumeMsg.sessionId})`.cyan);
                     claudeProcess = spawnClaude(resumeMsg, webSocket, (resultEvent: Record<string, unknown>) => {
                         persistResultContext(resultEvent);
-                        triggerResultEventBackup();
 
                         // Trigger #3: size threshold backup (every 5MB boundary crossed)
                         if (activeSessionId && activeProjectDir) {
@@ -1742,9 +1789,13 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                             }
                         }
 
+                        // R2 backup runs AFTER sync — see new_session handler for rationale.
                         scheduleSync(async (): Promise<void> => {
                             await autoSyncWebUI();
                             await persistResultContext(resultEvent);
+                            if (activeSessionId) {
+                                await backupSessionJsonl(activeSessionId, 'after_sync', true);
+                            }
                         });
                     }, onSystemEvent, undefined, undefined, directWriteMessage);
 
@@ -1753,7 +1804,12 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                         if (webSocket.readyState === WebSocket.OPEN) {
                             webSocket.send(JSON.stringify({type: 'process_exit', code}));
                         }
-                        flushSync(autoSyncWebUI);
+                        flushSync(async (): Promise<void> => {
+                            await autoSyncWebUI();
+                            if (activeSessionId) {
+                                await backupSessionJsonl(activeSessionId, 'after_exit_sync', true);
+                            }
+                        });
                         claudeProcess = null;
                     });
 

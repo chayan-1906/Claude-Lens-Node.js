@@ -19,6 +19,8 @@ async function loadBestJsonlContent(session: ISession): Promise<string | null> {
     // Priority 1: R2 JSONL backup
     const r2Content: string | null = await downloadJsonlBackup(session.sessionId);
     if (r2Content) {
+        const r2LineCount: number = r2Content.split('\n').filter((line: string) => line.trim().length > 0).length;
+        console.log(`DIAGNOSTIC: Export source=R2 sessionId=${session.sessionId} bytes=${r2Content.length} nonEmptyLines=${r2LineCount}`.bgMagenta.white.bold);
         console.log(`Export: Using R2 JSONL backup for session ${session.sessionId}`.cyan);
         return r2Content;
     }
@@ -28,12 +30,15 @@ async function loadBestJsonlContent(session: ISession): Promise<string | null> {
     if (fs.existsSync(jsonlPath)) {
         try {
             const content: string = fs.readFileSync(jsonlPath, 'utf-8');
+            const diskLineCount: number = content.split('\n').filter((line: string) => line.trim().length > 0).length;
+            console.log(`DIAGNOSTIC: Export source=DISK sessionId=${session.sessionId} path=${jsonlPath} bytes=${content.length} nonEmptyLines=${diskLineCount}`.bgMagenta.white.bold);
             console.log(`Export: Using on-disk JSONL for session ${session.sessionId}`.cyan);
             return content;
         } catch (err: unknown) {
             console.warn(`Export: Failed to read on-disk JSONL — ${err}`.yellow);
         }
     }
+    console.log(`DIAGNOSTIC: Export source=NONE sessionId=${session.sessionId} (R2 empty AND disk missing — will rebuild)`.bgMagenta.white.bold);
     return null;
 }
 
@@ -70,10 +75,12 @@ class ExportService {
             );
 
             let jsonlContent: string | null = await loadBestJsonlContent(session);
+            let jsonlSource: string = jsonlContent ? 'loadBestJsonlContent' : 'none';
 
             if (!jsonlContent && canBuildLosslessMongoJsonl(messages, sessionLines)) {
                 const jsonlLines: string[] = buildLosslessMongoJsonlLines(messages, sessionLines);
                 jsonlContent = jsonlLines.join('\n');
+                jsonlSource = 'lossless_rebuild';
                 console.log(`Export: Built lossless MongoDB JSONL for session ${session.sessionId}`.cyan);
             }
 
@@ -93,9 +100,12 @@ class ExportService {
                     ...(message.tokenUsage && {tokenUsage: message.tokenUsage}),
                 })]);
                 jsonlContent = jsonlLines.join('\n');
+                jsonlSource = 'lossy_reconstruction';
                 console.warn(`Export: Falling back to lossy reconstruction for session ${session.sessionId}`.yellow);
             }
 
+            const finalLineCount: number = jsonlContent.split('\n').filter((line: string) => line.trim().length > 0).length;
+            console.log(`DIAGNOSTIC: Export final JSONL sessionId=${session.sessionId} source=${jsonlSource} bytes=${jsonlContent.length} nonEmptyLines=${finalLineCount} mongoMessages=${messages.length} mongoSessionLines=${sessionLines.length}`.bgMagenta.white.bold);
             console.debug('DEBUG: Session JSONL built'.cyan, {sessionId: session.sessionId, messages: messages.length, sessionLines: sessionLines.length});
             archive.append(jsonlContent, {name: `projects/${session.sessionId}.jsonl`});
 

@@ -210,6 +210,7 @@ async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffe
     if (!client) return null;
     try {
         const raw: Buffer = Buffer.isBuffer(jsonlContent) ? jsonlContent : Buffer.from(jsonlContent);
+        const lineCount: number = raw.toString('utf-8').split('\n').filter((line: string) => line.trim().length > 0).length;
         const compressedJsonl: Buffer = zlib.gzipSync(raw);
         const key: string = `${sessionId}/${sessionId}.jsonl`;
         await client.send(new PutObjectCommand({
@@ -220,6 +221,7 @@ async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffe
             ContentEncoding: 'gzip',
         }));
         const url: string = `${config.publicUrl}/${key}`;
+        console.log(`DIAGNOSTIC: R2 upload sessionId=${sessionId} bytes=${raw.length} gzippedBytes=${compressedJsonl.length} nonEmptyLines=${lineCount}`.bgMagenta.white.bold);
         console.log(`R2: JSONL backup uploaded — ${sessionId} (${(raw.length / 1024).toFixed(1)} KB → ${(compressedJsonl.length / 1024).toFixed(1)} KB gzipped)`.green);
         return url;
     } catch (error: unknown) {
@@ -235,10 +237,12 @@ async function uploadJsonlBackup(sessionId: string, jsonlContent: string | Buffe
 async function downloadJsonlBackup(sessionId: string): Promise<string | null> {
     const config: IR2Config | null = getR2Config();
     if (!config) {
+        console.log(`DIAGNOSTIC: R2 download skipped sessionId=${sessionId} reason=no_config`.bgMagenta.white.bold);
         return null;
     }
     const client: S3Client | null = getR2Client();
     if (!client) {
+        console.log(`DIAGNOSTIC: R2 download skipped sessionId=${sessionId} reason=no_client`.bgMagenta.white.bold);
         return null;
     }
     try {
@@ -250,12 +254,22 @@ async function downloadJsonlBackup(sessionId: string): Promise<string | null> {
         if (resp.ContentEncoding === 'gzip') {
             const bytes: Uint8Array | undefined = await resp.Body?.transformToByteArray();
             if (!bytes) {
+                console.log(`DIAGNOSTIC: R2 download empty body sessionId=${sessionId}`.bgMagenta.white.bold);
                 return null;
             }
-            return zlib.gunzipSync(Buffer.from(bytes)).toString('utf-8');
+            const decompressed: string = zlib.gunzipSync(Buffer.from(bytes)).toString('utf-8');
+            const lineCount: number = decompressed.split('\n').filter((line: string) => line.trim().length > 0).length;
+            console.log(`DIAGNOSTIC: R2 download OK sessionId=${sessionId} encoding=gzip gzippedBytes=${bytes.length} decompressedBytes=${decompressed.length} nonEmptyLines=${lineCount}`.bgMagenta.white.bold);
+            return decompressed;
         }
-        return await resp.Body?.transformToString() ?? null;
-    } catch {
+        const plain: string | null = await resp.Body?.transformToString() ?? null;
+        if (plain) {
+            const lineCount: number = plain.split('\n').filter((line: string) => line.trim().length > 0).length;
+            console.log(`DIAGNOSTIC: R2 download OK sessionId=${sessionId} encoding=plain bytes=${plain.length} nonEmptyLines=${lineCount}`.bgMagenta.white.bold);
+        }
+        return plain;
+    } catch (error: unknown) {
+        console.log(`DIAGNOSTIC: R2 download error sessionId=${sessionId} error=${error instanceof Error ? error.message : String(error)}`.bgMagenta.white.bold);
         return null;
     }
 }
