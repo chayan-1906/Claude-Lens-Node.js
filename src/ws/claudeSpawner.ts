@@ -20,6 +20,10 @@ function buildArgs(message: INewSessionMessage | IResumeSessionMessage): string[
         '--output-format', 'stream-json',
         '--input-format', 'stream-json',
         '--include-partial-messages',
+        // Move dynamic per-machine sections (cwd, env, git status) into the first
+        // user message instead of the system prompt so the cached prefix stays
+        // byte-stable across spawns and machines, reducing cache_creation cost.
+        '--exclude-dynamic-system-prompt-sections',
         '--allowedTools', 'mcp__*',
         // Instruct Claude to use Bash for .claude/ file writes. The Edit tool has a
         // hardcoded protection that blocks edits to .claude/ directories in non-interactive
@@ -159,6 +163,9 @@ function spawnClaude(message: INewSessionMessage | IResumeSessionMessage, webSoc
         detached: true,
         env: {
             ...process.env,
+            // Opus 4.7 only: shorter system prompt + abbreviated tool descriptions.
+            // Silent no-op on Sonnet/Haiku — harmless to set unconditionally.
+            CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT: '1',
             ...(claudeConfigDir ? {CLAUDE_CONFIG_DIR: claudeConfigDir} : {}),
         },
     });
