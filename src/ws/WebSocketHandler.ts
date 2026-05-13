@@ -745,6 +745,11 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         // --- Direct-write state: write messages to MongoDB as they stream ---
         let directWriteSessionOid: Types.ObjectId | null = null;
         let lastWrittenUuid: string | null = null;
+        // Dedup guard for upsertSessionOnInit. Claude CLI emits multiple `system` events
+        // per spawn (init, plus events like compact_boundary) — without this set, each one
+        // re-runs the Session+Project upserts in parallel, and the concurrent Project
+        // upserts race on the rawProjectDir/projectDir unique indexes (E11000).
+        const upsertedSessionIds: Set<string> = new Set<string>();
         // Holds attachment metadata uploaded for a new_session before its real
         // sessionId arrives via the system event. Pushed to the per-session
         // queue (and cleared) inside onSystemEvent. resume_session/send_message
@@ -960,6 +965,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
         const upsertSessionOnInit = async (event: Record<string, unknown>): Promise<void> => {
             if (event.type !== 'system' || !event.session_id) return;
             const sessionId: string = event.session_id as string;
+
+            // Synchronous dedup — Claude CLI emits multiple `system` events per spawn
+            // (init, compact_boundary, etc.). Without this guard, each event launches
+            // parallel Session+Project upserts and the concurrent Project upserts race
+            // on the rawProjectDir/projectDir unique indexes (E11000).
+            if (upsertedSessionIds.has(sessionId)) return;
+            upsertedSessionIds.add(sessionId);
+
             // Fall back to activeProjectDir when the system event omits cwd (e.g. MCP init events,
             // older CLI versions). Without the fallback, MongoDB gets projectDir: "" and the session
             // becomes permanently unresumable — the same failure mode as b9e1e513.
@@ -980,7 +993,14 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 directWriteSessionOid = session!._id as Types.ObjectId;
                 lastWrittenUuid = null;
                 console.log(`WebSocket: [direct-write] Session upserted — sessionId: ${sessionId}, _id: ${directWriteSessionOid}`.green);
+            } catch (error: unknown) {
+                // Roll back the dedup so a later system event can retry the upsert.
+                upsertedSessionIds.delete(sessionId);
+                console.error(`WebSocket: [direct-write] Failed to upsert Session — sessionId: ${sessionId}, error: ${error}`.red);
+                return;
+            }
 
+            try {
                 await ProjectModel.findOneAndUpdate(
                     {projectDir},
                     {
@@ -992,7 +1012,15 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 );
                 console.log(`WebSocket: [direct-write] Project upserted — projectDir: ${projectDir}`.green);
             } catch (error: unknown) {
-                console.error(`WebSocket: [direct-write] Failed to upsert session — ${error}`.red);
+                // E11000 means another concurrent path created the project first — the
+                // end state matches what we wanted, so treat this as benign. Anything
+                // else is a real error.
+                const code: number | undefined = (error as {code?: number} | null)?.code;
+                if (code === 11000) {
+                    console.log(`WebSocket: [direct-write] Project already exists (concurrent insert resolved) — projectDir: ${projectDir}`.gray);
+                } else {
+                    console.error(`WebSocket: [direct-write] Failed to upsert Project — projectDir: ${projectDir}, error: ${error}`.red);
+                }
             }
         }
 
