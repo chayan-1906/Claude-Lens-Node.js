@@ -1,5 +1,6 @@
-import {IMessage} from "../models/Message";
+import {IAttachmentMeta} from "./ws";
 import {ISession} from "../models/Session";
+import {ContentBlock, IMessage} from "../models/Message";
 
 /** ------------- Constants and Type Aliases ------------- */
 
@@ -82,4 +83,32 @@ export interface IStubMessagesResponse {
     stubbedCount?: number;
     diskUpdated?: boolean;
     error?: string;
+}
+
+export interface IGeneratePdfParams {
+    sessionId?: string;
+    includeThinking?: boolean;
+    includeTools?: boolean;
+}
+
+export interface IGeneratePdfResponse {
+    pdfBuffer?: Buffer;
+    filename?: string;
+    error?: string;
+}
+
+export interface IPdfRenderOptions {
+    includeThinking: boolean;
+    includeTools: boolean;
+}
+
+export type TPdfTextBlock = Extract<ContentBlock, {type: 'text'}>;
+export type TPdfThinkingBlock = Extract<ContentBlock, {type: 'thinking'}>;
+export type TPdfToolUseBlock = Extract<ContentBlock, {type: 'tool_use'}>;
+export type TPdfToolResultBlock = Extract<ContentBlock, {type: 'tool_result'}>;
+
+export interface IPdfUserContentExtract {
+    bodyText: string;
+    derivedAttachments: IAttachmentMeta[];
+    toolResultBlocks: TPdfToolResultBlock[];
 }

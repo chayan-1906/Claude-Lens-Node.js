@@ -2,12 +2,13 @@ import "colors";
 import fs from "fs";
 import path from "path";
 import {Request, Response} from "express";
+import PdfService from "../services/PdfService";
 import {ApiResponse} from "../utils/ApiResponse";
 import {ESessionSource} from "../models/Session";
 import SessionService from "../services/SessionService";
 import {resolveLocalPath, toProjectDirHash} from "../utils/resolveProjectDir";
-import {IDeleteSessionParams, IGetSessionParams, IStubMessagesParams, IUpdateSessionParams} from "../types/session";
 import {generateFailureCode, generateInvalidCode, generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
+import {IDeleteSessionParams, IGeneratePdfParams, IGetSessionParams, IStubMessagesParams, IUpdateSessionParams} from "../types/session";
 
 const VALID_SOURCES: string[] = Object.values(ESessionSource);
 
@@ -264,4 +265,58 @@ const stubMessagesController = async (req: Request, res: Response) => {
     }
 }
 
-export {getAllSessionsController, getSessionController, deleteSessionController, updateSessionController, stubMessagesController};
+const generateSessionPdfController = async (req: Request, res: Response) => {
+    console.info('Controller: generateSessionPdfController started'.bgBlue.white.bold);
+
+    try {
+        const {sessionId}: Partial<IGeneratePdfParams> = req.params;
+        const rawIncludeThinking: unknown = req.query.includeThinking;
+        const rawIncludeTools: unknown = req.query.includeTools;
+        const includeThinking: boolean = typeof rawIncludeThinking === 'string' && rawIncludeThinking.toLowerCase() === 'true';
+        const includeTools: boolean = typeof rawIncludeTools === 'string' && rawIncludeTools.toLowerCase() === 'true';
+        console.debug('DEBUG: Received params'.cyan, {sessionId, includeThinking, includeTools});
+
+        const {pdfBuffer, filename, error} = await PdfService.generateSessionPdf({sessionId, includeThinking, includeTools});
+        if (error || !pdfBuffer || !filename) {
+            console.warn('WARN: PdfService.generateSessionPdf returned error'.yellow.bold, {error, sessionId});
+            let errorMsg: string = 'Failed to generate PDF!';
+            let statusCode: number = 500;
+
+            if (error === generateInvalidCode('sessionId')) {
+                statusCode = 400;
+                errorMsg = `Invalid sessionId: ${sessionId}!`;
+            } else if (error === generateNotFoundCode('session')) {
+                statusCode = 404;
+                errorMsg = `No session found with sessionId: ${sessionId}!`;
+            } else if (error === generateFailureCode('pdf_generation')) {
+                statusCode = 500;
+                errorMsg = `Failed to generate PDF for sessionId: ${sessionId}!`;
+            }
+
+            res.status(statusCode).send(new ApiResponse({
+                success: false,
+                errorCode: error,
+                errorMsg,
+            }));
+            return;
+        }
+
+        console.log('SUCCESS: PDF generated'.bgGreen.bold, {sessionId, filename, bytes: pdfBuffer.length});
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', String(pdfBuffer.length));
+        res.end(pdfBuffer);
+    } catch (error: any) {
+        console.error('Controller Error: generateSessionPdfController failed'.red.bold, error);
+        if (!res.headersSent) {
+            res.status(500).send(new ApiResponse({
+                success: false,
+                errorMsg: error.message || 'Something went wrong while generating the PDF!',
+            }));
+        } else {
+            res.destroy();
+        }
+    }
+}
+
+export {getAllSessionsController, getSessionController, deleteSessionController, updateSessionController, stubMessagesController, generateSessionPdfController};
