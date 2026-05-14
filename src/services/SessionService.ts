@@ -10,7 +10,7 @@ import {getR2Config} from "../utils/localConfig";
 import SessionLineModel from "../models/SessionLine";
 import {CLAUDE_PROJECTS_DIR} from "../utils/constants";
 import SessionModel, {ISession} from "../models/Session";
-import MessageModel, {ContentBlock, IMessage} from "../models/Message";
+import MessageModel, {ContentBlock, EMessageRole, IMessage} from "../models/Message";
 import {appendCustomTitleLine, appendCustomTitleLineToContent} from "../utils/customTitle";
 import {resolveLocalPath, resolveProjectDirHash, toProjectDirHash} from "../utils/resolveProjectDir";
 import {deleteAttachmentsByUrls, downloadJsonlBackup, isR2Configured, uploadJsonlBackup} from "../utils/r2";
@@ -273,7 +273,7 @@ class SessionService {
         if (reclaimR2 && isR2Configured()) {
             const config: IR2Config = getR2Config()!;
             const userMessages = await MessageModel.find(
-                {sessionInternalId: session._id, role: 'user'},
+                {sessionInternalId: session._id, role: EMessageRole.USER},
                 {content: 1},
             ).lean();
             for (const msg of userMessages) {

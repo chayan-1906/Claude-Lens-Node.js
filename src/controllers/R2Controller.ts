@@ -1,11 +1,11 @@
 import "colors";
 import {Request, Response} from "express";
 import {IR2Config} from "../types/setup";
-import MessageModel from "../models/Message";
 import SessionModel from "../models/Session";
 import {ApiResponse} from "../utils/ApiResponse";
 import {getR2Config} from "../utils/localConfig";
 import {IReclaimR2StorageParams} from "../types/r2";
+import MessageModel, {EMessageRole} from "../models/Message";
 import {generateMissingCode} from "../utils/generateErrorCodes";
 import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 
@@ -42,7 +42,7 @@ const reclaimR2StorageController = async (req: Request, res: Response) => {
             const session = await SessionModel.findOne({sessionId}, {_id: 1}).lean();
             if (session) {
                 const userMessages = await MessageModel.find(
-                    {sessionInternalId: session._id, role: 'user'},
+                    {sessionInternalId: session._id, role: EMessageRole.USER},
                     {content: 1},
                 ).lean();
                 for (const msg of userMessages) {
@@ -70,7 +70,7 @@ const reclaimR2StorageController = async (req: Request, res: Response) => {
             if (sessions.length) {
                 const sessionInternalIds = sessions.map(session => session._id);
                 const userMessages = await MessageModel.find(
-                    {sessionInternalId: {$in: sessionInternalIds}, role: 'user'},
+                    {sessionInternalId: {$in: sessionInternalIds}, role: EMessageRole.USER},
                     {content: 1},
                 ).lean();
                 for (const msg of userMessages) {

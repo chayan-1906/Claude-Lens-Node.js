@@ -12,11 +12,11 @@ import MemoryModel from "../models/Memory";
 import ProjectModel from "../models/Project";
 import SyncService from "../services/SyncService";
 import SessionService from "../services/SessionService";
-import MessageModel, {IMessage} from "../models/Message";
 import * as pendingAttachments from "../utils/pendingAttachments";
 import {addToolToProjectAllowList} from "../permissions/allowList";
 import SessionLineModel, {ISessionLine} from "../models/SessionLine";
 import {CRLF_REGEX, TRAILING_SLASHES_REGEX} from "../utils/constants";
+import MessageModel, {EMessageRole, IMessage} from "../models/Message";
 import SessionModel, {ESessionSource, ISession} from "../models/Session";
 import {sendMessage, spawnClaude, toContextNdjson} from "./claudeSpawner";
 import {buildContentBlocks, downloadJsonlBackup, uploadJsonlBackup} from "../utils/r2";
@@ -1042,16 +1042,16 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                 return;
             }
 
-            const role: string = event.type as string; // 'assistant' or 'user'
+            const role: EMessageRole = event.type as EMessageRole; // 'assistant' or 'user'
             const msgObj = event.message as Record<string, unknown> | undefined;
             if (!msgObj) return;
 
             const content = msgObj.content as string | Record<string, unknown>[];
-            const aiModel: string | undefined = role === 'assistant' ? (msgObj.model as string | undefined) : undefined;
+            const aiModel: string | undefined = role === EMessageRole.ASSISTANT ? (msgObj.model as string | undefined) : undefined;
 
             // Extract token usage from assistant events
             let tokenUsage: Record<string, number> | undefined;
-            if (role === 'assistant' && msgObj.usage) {
+            if (role === EMessageRole.ASSISTANT && msgObj.usage) {
                 const usage = msgObj.usage as Record<string, number>;
                 tokenUsage = {
                     inputTokens: usage.input_tokens ?? 0,
@@ -1088,8 +1088,8 @@ function attachWebSocket(httpServer: HttpServer): WebSocketServer {
                     role,
                     content,
                     aiModel,
-                    effortLevel: role === 'assistant' ? (activeEffortLevel ?? undefined) : undefined,
-                    thinking: role === 'assistant' ? (activeThinking ?? undefined) : undefined,
+                    effortLevel: role === EMessageRole.ASSISTANT ? (activeEffortLevel ?? undefined) : undefined,
+                    thinking: role === EMessageRole.ASSISTANT ? (activeThinking ?? undefined) : undefined,
                     timestamp: new Date(),
                     tokenUsage,
                     ...(rawLines && rawLines.length > 0 ? {rawLines} : {}),

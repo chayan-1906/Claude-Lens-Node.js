@@ -2,9 +2,9 @@ import "colors";
 import mongoose from "mongoose";
 import SessionModel from "../models/Session";
 import {IAttachmentMeta} from "../types/ws";
-import MessageModel, {IMessage} from "../models/Message";
 import {connectDB, closeConnection} from "../config/connectDB";
 import {isHumanAttachmentMessage} from "../utils/attachmentPredicate";
+import MessageModel, {EMessageRole, IMessage} from "../models/Message";
 import {ILeanMessage, ILeanSession, IPlannedMove, ISessionRepairResult} from "../types/repairAttachmentAttribution";
 
 /**
@@ -44,7 +44,7 @@ function isWrongMessage(message: ILeanMessage): boolean {
 
 async function planSessionRepair(session: ILeanSession): Promise<IPlannedMove[]> {
     const messages: ILeanMessage[] = await MessageModel
-        .find({sessionInternalId: session._id, role: 'user'}, {_id: 1, uuid: 1, role: 1, content: 1, attachments: 1, timestamp: 1})
+        .find({sessionInternalId: session._id, role: EMessageRole.USER}, {_id: 1, uuid: 1, role: 1, content: 1, attachments: 1, timestamp: 1})
         .sort({timestamp: 1})
         .lean<ILeanMessage[]>();
 
@@ -107,7 +107,7 @@ async function applyMoves(moves: IPlannedMove[]): Promise<void> {
 
 async function countOrphans(session: ILeanSession, paired: IPlannedMove[]): Promise<number> {
     const messages: ILeanMessage[] = await MessageModel
-        .find({sessionInternalId: session._id, role: 'user'}, {_id: 1, uuid: 1, role: 1, content: 1, attachments: 1, timestamp: 1})
+        .find({sessionInternalId: session._id, role: EMessageRole.USER}, {_id: 1, uuid: 1, role: 1, content: 1, attachments: 1, timestamp: 1})
         .sort({timestamp: 1})
         .lean<ILeanMessage[]>();
 

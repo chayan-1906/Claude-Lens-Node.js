@@ -3,12 +3,12 @@ import mongoose, {ClientSession, Types} from "mongoose";
 import TaskModel from "../models/Task";
 import {IR2Config} from "../types/setup";
 import MemoryModel from "../models/Memory";
-import MessageModel from "../models/Message";
 import ProjectModel from "../models/Project";
 import SessionModel from "../models/Session";
 import {getR2Config} from "../utils/localConfig";
 import SessionLineModel from "../models/SessionLine";
 import {reclaimR2Storage} from "../utils/reclaimR2Storage";
+import MessageModel, {EMessageRole} from "../models/Message";
 import {deleteAttachmentsByUrls, isR2Configured} from "../utils/r2";
 import {generateMissingCode, generateNotFoundCode} from "../utils/generateErrorCodes";
 import {IDeleteProjectParams, IDeleteProjectResponse, IGetAllProjectsResponse, IProject, IRenameProjectParams, IRenameProjectResponse} from "../types/project";
@@ -87,7 +87,7 @@ class ProjectService {
         if (reclaimR2 && isR2Configured()) {
             const config: IR2Config = getR2Config()!;
             const userMessages = await MessageModel.find(
-                {sessionInternalId: {$in: sessionInternalIds}, role: 'user'},
+                {sessionInternalId: {$in: sessionInternalIds}, role: EMessageRole.USER},
                 {content: 1},
             ).lean();
             for (const msg of userMessages) {
