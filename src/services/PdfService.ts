@@ -1,4 +1,5 @@
 import "colors";
+import {spawn} from "child_process";
 import puppeteer, {Browser, Page, PDFOptions} from "puppeteer";
 import SessionModel, {ISession} from "../models/Session";
 import MessageModel, {IMessage} from "../models/Message";
@@ -47,11 +48,44 @@ class PdfService {
         }
     }
 
-    private static async renderToPdf(html: string, session: ISession): Promise<Buffer> {
-        const browser: Browser = await puppeteer.launch({
+    private static async launchBrowser(): Promise<Browser> {
+        const launchOptions = {
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        };
+        try {
+            return await puppeteer.launch(launchOptions);
+        } catch (launchError: unknown) {
+            const message: string = (launchError as Error).message ?? '';
+            if (!message.includes('Could not find Chrome')) {
+                throw launchError;
+            }
+            console.warn('Service: Chromium binary missing, installing automatically (this may take ~30s)...'.yellow.bold);
+            await PdfService.installChromium();
+            return await puppeteer.launch(launchOptions);
+        }
+    }
+
+    private static installChromium(): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const child = spawn('npx', ['puppeteer', 'browsers', 'install', 'chrome'], {
+                cwd: process.cwd(),
+                stdio: 'inherit',
+            });
+            child.on('error', reject);
+            child.on('exit', (code: number | null) => {
+                if (code === 0) {
+                    console.log('Service: Chromium installed'.green.bold);
+                    resolve();
+                } else {
+                    reject(new Error(`Chromium install exited with code ${code}`));
+                }
+            });
         });
+    }
+
+    private static async renderToPdf(html: string, session: ISession): Promise<Buffer> {
+        const browser: Browser = await PdfService.launchBrowser();
         try {
             const page: Page = await browser.newPage();
             await page.setJavaScriptEnabled(false);
