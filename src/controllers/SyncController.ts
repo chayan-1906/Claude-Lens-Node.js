@@ -32,10 +32,12 @@ const syncController = async (req: Request, res: Response) => {
 
     try {
         const {projectDirs, targets}: ISyncParams = req.body;
+        console.debug('DEBUG: Received body'.cyan, {projectDirsCount: projectDirs?.length ?? 'all', targets: targets ?? 'all'});
 
         if (targets && targets.length > 0) {
             const invalid: string[] = targets.filter((t) => !ALL_SYNC_TARGETS.includes(t));
             if (invalid.length > 0) {
+                console.warn('WARN: Invalid sync targets'.yellow.bold, {invalid, validTargets: ALL_SYNC_TARGETS});
                 res.status(400).send(new ApiResponse({
                     success: false,
                     errorCode: generateInvalidCode('targets'),
@@ -45,6 +47,7 @@ const syncController = async (req: Request, res: Response) => {
             }
         }
 
+        console.debug('DEBUG: Delegating to SyncService'.cyan);
         const {sessions, tasks, memories} = await SyncService.sync({projectDirs, targets});
 
         console.log('SUCCESS: Sync complete'.bgGreen.bold, {sessions, tasks, memories});

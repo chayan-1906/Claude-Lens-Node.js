@@ -1,10 +1,10 @@
 import {Router} from "express";
-import {getAllMemoriesController, getMemoryController, deleteMemoryByProjectDirController} from "../controllers/MemoryController";
+import {getAllMemoriesController, getMemoriesController, deleteMemoriesByProjectDirController} from "../controllers/MemoryController";
 
 const router: Router = Router();
 
 router.get('/', getAllMemoriesController);
-router.get('/:projectDir', getMemoryController);
-router.delete('/:projectDir', deleteMemoryByProjectDirController);
+router.get('/:projectDir', getMemoriesController);
+router.delete('/:projectDir', deleteMemoriesByProjectDirController);
 
 export default router;

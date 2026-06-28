@@ -2,7 +2,7 @@ import {Document, model, Model, Schema} from "mongoose";
 
 /**
  * Memory document interface
- * One document per ~/.claude/projects/{project}/memory/MEMORY.md file
+ * One document per .md file in ~/.claude/projects/{project}/memory/
  */
 export interface IMemory extends Document {
     memoryId: string;   // derived from _id via toJSON
@@ -27,7 +27,6 @@ const MemorySchema = new Schema<IMemory>({
         type: String,
         required: true,
         trim: true,
-        unique: true,
         index: true,
     },
     content: {
@@ -47,6 +46,9 @@ const MemorySchema = new Schema<IMemory>({
         },
     },
 });
+
+MemorySchema.index({projectDir: 1, filePath: 1}, {unique: true});
+MemorySchema.index({content: 'text', filePath: 'text'});
 
 /** Mongoose model for Claude Code memory */
 const MemoryModel: IMemoryModel = model<IMemory, IMemoryModel>('Memory', MemorySchema);

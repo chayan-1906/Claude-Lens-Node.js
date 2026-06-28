@@ -12,8 +12,8 @@ export interface IGetAllMemoriesResponse {
     pagination: IPagination;
 }
 
-export interface IGetMemoryResponse {
-    memory?: IMemory;
+export interface IGetMemoriesResponse {
+    memories?: IMemory[];
     error?: string;
 }
 
@@ -31,6 +31,6 @@ export interface IGetAllMemoriesParams {
     limit?: number;
 }
 
-export interface IGetMemoryParams {
+export interface IGetMemoriesParams {
     projectDir?: string;
 }

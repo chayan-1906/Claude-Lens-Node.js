@@ -1,7 +1,7 @@
 import "colors";
 import mongoose from "mongoose";
-import {MONGO_URI} from "./config";
-import {getLocalConfig, ILocalConfig} from "../utils/localConfig";
+import {getLocalConfig} from "../utils/localConfig";
+import {ILocalConfig, IMongoConfiguration} from "../types/setup";
 
 /** Cached MongoDB connection for reuse across requests */
 let cachedConnection: typeof mongoose | null = null;
@@ -17,11 +17,17 @@ let listenersRegistered: boolean = false;
  */
 function resolveMongoUri(): string | undefined {
     const localConfig: ILocalConfig | null = getLocalConfig();
-    if (localConfig?.MONGO_URI) {
-        return localConfig.MONGO_URI;
+    if (localConfig) {
+        const activeConfig: IMongoConfiguration | undefined = localConfig.configurations.find(
+            (config: IMongoConfiguration) => config.id === localConfig.activeConfigId,
+        );
+        if (activeConfig?.uri) {
+            console.log('Database: Resolved URI'.cyan, activeConfig.uri);
+            return activeConfig.uri;
+        }
     }
 
-    return MONGO_URI;
+    // return MONGO_URI;
 }
 
 /**
@@ -38,6 +44,8 @@ async function connectDB(uri?: string): Promise<typeof mongoose | null> {
         return null;
     }
 
+    console.log('Database: Effective URI'.cyan, effectiveUri);
+
     try {
         // If an explicit URI is provided and we already have a connection, close it first
         if (uri && cachedConnection && mongoose.connection.readyState === 1) {
@@ -53,7 +61,7 @@ async function connectDB(uri?: string): Promise<typeof mongoose | null> {
         const options = {
             maxPoolSize: 10,
             serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000,
+            socketTimeoutMS: 300000,
             maxIdleTimeMS: 30000,
             retryWrites: true,
         };

@@ -1,10 +1,28 @@
 /** ------------- Constants and Type Aliases ------------- */
 
+export interface IProject {
+    rawProjectDir: string;
+    projectDir: string;
+    customName?: string;
+    description?: string;
+}
+
+export interface IRenameProjectParams {
+    projectDir: string;
+    customName: string;
+    description?: string;
+}
+
+export interface IRenameProjectResponse {
+    project?: IProject;
+    error?: string;
+}
+
 
 /** ------------- API response types ------------- */
 
 export interface IGetAllProjectsResponse {
-    projects: string[];
+    projects: IProject[];
 }
 
 export interface IDeleteProjectResponse {
@@ -12,6 +30,7 @@ export interface IDeleteProjectResponse {
     deletedMessages?: number;
     deletedTasks?: number;
     deletedMemories?: number;
+    deletedAttachments?: number;
     error?: string;
 }
 
@@ -20,4 +39,5 @@ export interface IDeleteProjectResponse {
 
 export interface IDeleteProjectParams {
     projectDir?: string;
+    reclaimR2?: boolean;
 }

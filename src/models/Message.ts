@@ -1,4 +1,5 @@
 import {Document, Model, model, Schema, Types} from "mongoose";
+import {IAttachmentMeta} from "../types/ws";
 
 // --- Content block types (assistant message content array) ---
 type ThinkingBlock = {
@@ -21,7 +22,7 @@ type ToolUseBlock = {
 type ToolResultBlock = {
     type: 'tool_result';
     tool_use_id: string;
-    content: string;
+    content: string | Record<string, unknown>[];
     is_error: boolean;
 };
 
@@ -40,15 +41,21 @@ export enum EMessageRole {
 export interface IMessage extends Document {
     messageId: string;                      // derived from _id via toJSON (not stored)
     uuid: string;                           // JSONL envelope uuid — deduplication key for re-sync
+    parentUuid?: string;                    // JSONL envelope parentUuid — tree structure for regenerate/edit branches
+    startLineIndex?: number;                // first JSONL line index that produced this message
     sessionInternalId: Types.ObjectId;      // ref: Session
     role: EMessageRole;
     content: string | ContentBlock[];
     aiModel?: string;                       // present only on assistant messages
+    effortLevel?: string;                   // effort level used at spawn time (low/medium/high/max)
+    thinking?: boolean;                     // extended thinking toggle state at spawn time
     timestamp: Date;                        // original timestamp from JSONL envelope
+    attachments?: IAttachmentMeta[];        // R2 metadata for user messages with file attachments
     tokenUsage?: {
         input: number;
         output: number;
     };
+    rawLines?: string[];                    // original JSONL line(s) that produced this message — lossless restore on resume
     createdAt: Date;
     updatedAt: Date;
 }
@@ -64,6 +71,12 @@ const MessageSchema = new Schema<IMessage>({
         required: true,
         unique: true,
         index: true,
+    },
+    parentUuid: {
+        type: String,
+    },
+    startLineIndex: {
+        type: Number,
     },
     sessionInternalId: {
         type: Schema.Types.ObjectId,
@@ -83,13 +96,28 @@ const MessageSchema = new Schema<IMessage>({
     aiModel: {
         type: String,
     },
+    effortLevel: {
+        type: String,
+    },
+    thinking: {
+        type: Boolean,
+    },
     timestamp: {
         type: Date,
         required: true,
     },
+    attachments: [{
+        name: {type: String, required: true},
+        mimeType: {type: String, required: true},
+        size: {type: Number, required: true},
+        r2Url: {type: String, required: true},
+    }],
     tokenUsage: {
         input: {type: Number},
         output: {type: Number},
+    },
+    rawLines: {
+        type: [String],
     },
 }, {
     timestamps: true,
@@ -103,6 +131,12 @@ const MessageSchema = new Schema<IMessage>({
         },
     },
 });
+
+// Compound index: covers the primary query pattern (find by session + sort by timestamp).
+// Without this, MongoDB must load all session messages into memory to sort them,
+// which exceeds the 33MB Atlas sort limit on large sessions.
+MessageSchema.index({sessionInternalId: 1, timestamp: 1});
+MessageSchema.index({'content': 'text', 'content.text': 'text', 'content.thinking': 'text'});
 
 /** Mongoose model for Claude Code messages */
 const MessageModel: IMessageModel = model<IMessage, IMessageModel>('Message', MessageSchema);

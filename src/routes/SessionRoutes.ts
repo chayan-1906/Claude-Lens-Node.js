@@ -1,10 +1,13 @@
 import {Router} from "express";
-import {deleteSessionController, getAllSessionsController, getSessionController} from "../controllers/SessionController";
+import {deleteSessionController, generateSessionPdfController, getAllSessionsController, getSessionController, updateSessionController, stubMessagesController} from "../controllers/SessionController";
 
 const router: Router = Router();
 
 router.get('/', getAllSessionsController);
 router.get('/:sessionId', getSessionController);
+router.get('/:sessionId/pdf', generateSessionPdfController);
+router.patch('/:sessionId', updateSessionController);
 router.delete('/:sessionId', deleteSessionController);
+router.patch('/:sessionId/messages/stub', stubMessagesController);
 
 export default router;

@@ -1,4 +1,5 @@
 import {EMessageRole} from "../models/Message";
+import {SessionLineType} from "../models/SessionLine";
 
 /** ------------- Constants and Type Aliases ------------- */
 
@@ -8,6 +9,8 @@ export const ALL_SYNC_TARGETS: SyncTarget[] = ['sessions', 'tasks', 'memories'];
 
 export interface IParsedMessage {
     uuid: string;
+    parentUuid?: string;
+    startLineIndex: number;
     role: EMessageRole;
     content: string | Record<string, unknown>[];
     aiModel?: string;
@@ -16,16 +19,34 @@ export interface IParsedMessage {
         input: number;
         output: number;
     };
+    rawLines?: string[];   // original JSONL line(s) — lossless restore on resume
+}
+
+export interface IJsonlEntry {
+    lineIndex: number;
+    timestamp: number;
+    order: number;
+    lines: string[];
+}
+
+export interface IParsedSessionLine {
+    sessionId: string;
+    lineIndex: number;
+    type: SessionLineType;
+    line: string;
 }
 
 export interface IParsedFile {
     sessionId: string;
-    projectDir: string;
+    projectDir: string;   // hashed version of cwd (e.g. -Users-padmanabhadas-my-project)
+    rawProjectDir: string; // original cwd as-is (e.g. /Users/padmanabhadas/my-project)
     gitBranch?: string;
     slug?: string;
     aiModel?: string;
     title: string;
     messages: IParsedMessage[];
+    sessionLines: IParsedSessionLine[];
+    contextTokensUsed?: number;  // total input tokens from the latest result event
 }
 
 export interface RawTask {
