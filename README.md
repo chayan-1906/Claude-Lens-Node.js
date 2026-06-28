@@ -1,4 +1,4 @@
-# 🤖 Claude-Lens — A Production Backend Written Entirely by AI
+# 🔭 Claude-Lens — Claude Code in your browser, running live on your own Mac
 
 > **Zero lines written by a human.** Every file in this repository was authored by **Claude Code** across live sessions. I directed the work and watched it happen — I never typed a single line of code.
 
