@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "author": "Padmanabha Das",
-  "license": "ISC",
+  "license": "MIT",
   "main": "dist/server.js",
   "scripts": {
     "dev": "node scripts/register-hook.mjs && nodemon --exec ts-node src/server.ts",
