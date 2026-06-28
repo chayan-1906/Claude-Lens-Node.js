@@ -6,10 +6,10 @@
   "license": "MIT",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "node scripts/register-hook.mjs && nodemon --exec ts-node src/server.ts",
+    "dev": "node scripts/register-hook.mjs && nodemon --exec tsx src/server.ts",
     "build": "tsc",
     "bundle": "ncc build dist/server.js -o build",
-    "package": "ts-node src/scripts/package-script.ts",
+    "package": "tsx src/scripts/package-script.ts",
     "start": "node dist/server.js",
     "postinstall": "node scripts/postinstall.js",
     "sync-app-hook": "node scripts/sync-app-hook.mjs"
@@ -46,7 +46,7 @@
     "@vercel/ncc": "^0.38.4",
     "@yao-pkg/pkg": "^6.19.0",
     "nodemon": "^3.1.14",
-    "ts-node": "^10.9.2",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }
 }
