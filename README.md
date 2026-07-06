@@ -11,7 +11,7 @@
 [![WebSocket](https://img.shields.io/badge/transport-WebSocket-orange.svg)](https://github.com/websockets/ws)
 [![License](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-**Claude-Lens** is a local WebSocket server that runs on your Mac, spawns the **Claude CLI**, and streams live coding sessions to a web UI — so you can use Claude Code from any browser or phone, on your own subscription, with full access to your local files and MCP servers. Every completed session auto-syncs to MongoDB.
+**Claude-Lens** is a local WebSocket server that runs on your Mac, spawns the **Claude CLI**, and streams live coding sessions to a local web UI — so you can use Claude Code in a browser on your own machine, on your own subscription, with full access to your local files and MCP servers. Every completed session auto-syncs to MongoDB.
 
 And the whole thing — the streaming engine, the cross-machine resume, the browser-based tool approval, the IDE bridge — was **built start to finish by AI**.
 
@@ -38,12 +38,12 @@ If you're curious what an AI agent can ship when pointed at a real, multi-week p
 
 The Claude CLI is fantastic — but it lives in your terminal, on one machine. Claude-Lens lifts it into the browser:
 
-- 🌍 **Use Claude Code from anywhere** — laptop, phone, tablet — while it runs on your Mac.
+- 🖥️ **Use Claude Code in a browser** — a full graphical UI for the CLI, running entirely on your own Mac.
 - 🔑 **Your subscription, your machine** — uses your local `claude` CLI login, your files, your MCP servers.
 - 💬 **A real chat UI** — streaming responses, attachments, voice, and a full session history.
 - 🗄️ **Nothing is lost** — every session is synced to MongoDB and (optionally) backed up to Cloudflare R2.
 
-> This repo is the **backend**. It pairs with a Next.js frontend (deployed on Vercel) that connects directly over WebSocket. Frontend repo: **[Claude-Lens-Next.js](https://github.com/chayan-1906/Claude-Lens-Next.js)**.
+> This repo is the **backend**. It pairs with a local Next.js frontend that connects over WebSocket on `localhost` — **nothing is deployed**. Everything ships as a macOS `.dmg` that bundles this backend executable together with the frontend's Next.js standalone build, and runs entirely on your machine. Frontend repo: **[Claude-Lens-Next.js](https://github.com/chayan-1906/Claude-Lens-Next.js)**.
 
 ---
 
@@ -83,11 +83,10 @@ The Claude CLI is fantastic — but it lives in your terminal, on one machine. C
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                  FRONTEND  (Next.js • Vercel)                │
-│                     Browser / Phone / Tablet                 │
+│         FRONTEND — Next.js standalone build (local)          │
+│              local browser UI — all on your Mac              │
 └───────────────────────────────┬──────────────────────────────┘
-                                │  WebSocket  (ws://…/ws) 
-                                │  via Cloudflare Tunnel 
+                                │  WebSocket  ws://localhost:20261/ws 
                                 ▼ 
 ┌──────────────────────────────────────────────────────────────┐
 │        CLAUDE-LENS BACKEND  —  your Mac, port 20261          │
@@ -172,7 +171,7 @@ Server started on 20261
     - WebSocket:    ws://localhost:20261/ws
 ```
 
-The frontend connects directly to `ws://localhost:20261/ws`. To reach it from your phone, expose the port with a **Cloudflare Tunnel**.
+The frontend connects directly to `ws://localhost:20261/ws` on the same machine — everything stays local, nothing is exposed to the internet.
 
 ---
 
@@ -180,20 +179,20 @@ The frontend connects directly to `ws://localhost:20261/ws`. To reach it from yo
 
 Copy `.env.example` → `.env` and fill in what you need. Most secrets are **optional at the file level** — you can configure MongoDB, R2, and Groq at runtime from the **Setup UI** (`/api/v1/setup/*`), in which case they're stored in `~/.claude-lens/config.json`.
 
-| Variable                       | Required | Example / Format                                                                 | How to get it |
-|--------------------------------|----------|----------------------------------------------------------------------------------|---------------|
-| `NODE_ENV`                     | ✅        | `development`                                                                     | — |
-| `PORT`                         | ✅        | `20261`                                                                           | Any free port; frontend connects to `ws://localhost:<PORT>/ws` |
-| `MONGO_URI`                    | recommended | `mongodb+srv://user:pass@cluster.mongodb.net/claude-lens`                     | Free cluster at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register), or `mongodb://localhost:27017/claude-lens`. Can be set via the Setup UI instead. |
-| `BACKEND_URL`                  | ✅        | `http://localhost:20261`                                                          | Your backend's base URL |
-| `FRONTEND_URL`                 | ✅        | `http://localhost:3000`                                                           | Your Next.js app's origin (used for CORS) |
-| `APP_VERSION`                  | ✅        | `1.0.0`                                                                           | — |
-| `GROQ_API_KEY`                 | optional | `gsk_…`                                                                           | Free key at [console.groq.com](https://console.groq.com) → API Keys. Enables voice input. |
-| `CLOUDFLARE_ACCESS_KEY_ID`     | optional | `58a2f8…`                                                                         | [Cloudflare R2](https://dash.cloudflare.com) → Manage R2 API Tokens |
-| `CLOUDFLARE_SECRET_ACCESS_KEY` | optional | `4501213…`                                                                        | Same token as above |
-| `CLOUDFLARE_R2_ENDPOINT`       | optional | `https://<account-id>.r2.cloudflarestorage.com`                                   | R2 dashboard → bucket settings |
-| `CLOUDFLARE_R2_PUBLIC_URL`     | optional | `https://<public-bucket-id>.r2.dev`                                               | R2 → bucket → Public access |
-| `CLOUDFLARE_R2_BUCKET_NAME`    | optional | `claude-lens`                                                                     | The bucket you created |
+| Variable                       | Required    | Example / Format                                          | How to get it                                                                                                                                                   |
+|--------------------------------|-------------|-----------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `NODE_ENV`                     | ✅           | `development`                                             | —                                                                                                                                                               |
+| `PORT`                         | ✅           | `20261`                                                   | Any free port; frontend connects to `ws://localhost:<PORT>/ws`                                                                                                  |
+| `MONGO_URI`                    | recommended | `mongodb+srv://user:pass@cluster.mongodb.net/claude-lens` | Free cluster at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register), or `mongodb://localhost:27017/claude-lens`. Can be set via the Setup UI instead. |
+| `BACKEND_URL`                  | ✅           | `http://localhost:20261`                                  | Your backend's base URL                                                                                                                                         |
+| `FRONTEND_URL`                 | ✅           | `http://localhost:3000`                                   | Your Next.js app's origin (used for CORS)                                                                                                                       |
+| `APP_VERSION`                  | ✅           | `1.0.0`                                                   | —                                                                                                                                                               |
+| `GROQ_API_KEY`                 | optional    | `gsk_…`                                                   | Free key at [console.groq.com](https://console.groq.com) → API Keys. Enables voice input.                                                                       |
+| `CLOUDFLARE_ACCESS_KEY_ID`     | optional    | `58a2f8…`                                                 | [Cloudflare R2](https://dash.cloudflare.com) → Manage R2 API Tokens                                                                                             |
+| `CLOUDFLARE_SECRET_ACCESS_KEY` | optional    | `4501213…`                                                | Same token as above                                                                                                                                             |
+| `CLOUDFLARE_R2_ENDPOINT`       | optional    | `https://<account-id>.r2.cloudflarestorage.com`           | R2 dashboard → bucket settings                                                                                                                                  |
+| `CLOUDFLARE_R2_PUBLIC_URL`     | optional    | `https://<public-bucket-id>.r2.dev`                       | R2 → bucket → Public access                                                                                                                                     |
+| `CLOUDFLARE_R2_BUCKET_NAME`    | optional    | `claude-lens`                                             | The bucket you created                                                                                                                                          |
 
 > 💡 **No secrets in git.** `.env` is gitignored — only `.env.example` (placeholders) is tracked.
 
@@ -247,7 +246,7 @@ npm run package    # build a standalone executable (ncc + pkg)
 
 ## 🔭 Companion Frontend
 
-The browser UI is a separate Next.js app deployed on Vercel. It connects straight to this backend over WebSocket — no tunnel needed for local use.
+The browser UI is a separate Next.js app that runs **locally** and connects to this backend over WebSocket on `localhost`. The two are shipped together in a macOS `.dmg` (this backend executable + the frontend's standalone build) — nothing is deployed.
 
 ➡️ **[github.com/chayan-1906/Claude-Lens-Next.js](https://github.com/chayan-1906/Claude-Lens-Next.js)**
 
